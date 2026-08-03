@@ -1,0 +1,45 @@
+[package]
+name = "protocol_user_profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent_core = { path = "../../core/agent_core" }
+didcomm = { path = "../../didcomm" }
+protocol_connections = { path = "../connections", default-features = false }
+
+# Optional event bus for emitting profile lifecycle events.
+agent_events = { path = "../../core/agent_events", optional = true }
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+bs58 = { workspace = true }
+
+# Tokio with full features for native, minimal for WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+
+[features]
+default = ["native"]
+native = ["protocol_connections/native"]
+wasm = ["protocol_connections/wasm"]
+# Emit lifecycle events on the agent_events::EventBus
+events = ["dep:agent_events"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

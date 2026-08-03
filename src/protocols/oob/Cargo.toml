@@ -1,0 +1,40 @@
+[package]
+name = "protocol_oob"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+
+[dependencies]
+# Workspace dependencies
+agent_core = { path = "../../core/agent_core" }
+agent_events = { path = "../../core/agent_events", optional = true }
+did = { path = "../../did" }
+didcomm = { path = "../../didcomm" }
+
+# External dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+url = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+events = ["dep:agent_events"]
+
+# Tokio with full features for native, minimal for WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true

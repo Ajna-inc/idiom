@@ -1,0 +1,83 @@
+[package]
+name = "registry_kanon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# did:kanon AnonCreds registry — an `anoncreds_core::AnonCredsRegistry`
+# implementation backed by the Kanon Besu contracts (chain 1947). Ports the
+# reference `aca-py-did-kanon` plugin so essi-rs can resolve + publish the
+# same on-chain schemas, cred-defs, and revocation status that DigiCred's
+# existing credentials are anchored to.
+
+[features]
+default = []
+# Enables the in-memory MockKanonChain outside of `cfg(test)` (useful for the
+# essi-agent-api harness before the live Besu client lands).
+mock = []
+# Live Besu client (chain_alloy.rs) via alloy. `default-features = false` on
+# alloy avoids the EIP-4844 `c-kzg 1.0` pull that conflicts with the
+# workspace's revm 30 (`c-kzg 2.1.x`) native `ckzg` link. The pinned
+# alloy-sol-type-parser keeps the alloy-core 1.5 family on winnow 0.7 (1.6+
+# jumps to winnow 1.0, which clashes with alloy-dyn-abi 1.5.4's winnow 0.7).
+besu = ["dep:alloy", "dep:alloy-sol-type-parser", "dep:reqwest", "dep:tokio"]
+
+[dependencies]
+anoncreds_core = { path = "../credentials/anoncreds_core" }
+agent_core = { path = "../core/agent_core" }
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+sha3 = "0.10"
+
+# Tier-2 (Mode B / ZK) Poseidon over BN254. Pinned to the ark 0.4 family
+# (ark-ff 0.4.2 is already in the workspace lock via other deps, so this
+# resolves offline). Field arithmetic only — the circomlib round
+# constants + MDS matrix are parsed from the vendored
+# `assets/poseidon_constants.json` at first use.
+ark-bn254 = { version = "0.4", default-features = false, features = ["scalar_field"] }
+ark-ff = { version = "0.4", default-features = false }
+once_cell = "1"
+# Arbitrary-precision scalars for BabyJubjub EdDSA (Mode B). Scalars live mod
+# the BabyJubjub group order (slightly > the BN254 scalar prime), so they don't
+# fit `Fr`; `num-bigint` 0.4 is already in the workspace lock (transitive via
+# ark-ff), so this resolves offline.
+num-bigint = { version = "0.4", default-features = false }
+
+# Live Besu client (feature "besu"). default-features=false keeps EIP-4844
+# `c-kzg` out of the graph (it conflicts with revm 30's c-kzg 2.1.x).
+alloy = { version = "1.5", default-features = false, features = [
+    "std",
+    "contract",
+    "providers",
+    "reqwest",
+    "signer-local",
+    "network",
+    "rpc-types-eth",
+    "json",
+], optional = true }
+# Pinned to the alloy-core 1.5 family (winnow 0.7). See the `besu` feature note.
+alloy-sol-type-parser = { version = "=1.5.4", optional = true }
+# alloy with default-features=false pulls reqwest without a TLS backend, so
+# HTTPS RPC fails. Enable rustls-tls on the same reqwest (feature unification).
+reqwest = { version = "0.13", default-features = false, features = ["rustls"], optional = true }
+# Async mutex to serialize on-chain writes (chain_alloy.rs, `besu` feature).
+tokio = { workspace = true, features = ["sync"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+# Integration tests (tests/) can only see the crate's public API + dev-deps,
+# so re-declare the deps the live test drives directly.
+agent_core = { path = "../core/agent_core" }
+anoncreds_core = { path = "../credentials/anoncreds_core" }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true

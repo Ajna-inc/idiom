@@ -1,0 +1,127 @@
+[package]
+name = "didcomm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+description = "Unified DIDComm crate (core, v1, transports, messaging)"
+
+[features]
+default = ["native"]
+
+# Native build: full features with spawn_blocking, v1 compat, and native transports.
+native = [
+    "v1-compat",
+    "tokio/rt",
+    "tokio/time",
+    # Native transport optional deps (HTTP client/server + WebSocket)
+    "dep:reqwest",
+    "dep:axum",
+    "dep:hyper",
+    "dep:tokio-tungstenite",
+    "dep:futures-util",
+]
+
+# DIDComm v1 compatibility. `v1` and `agent_core` are now always compiled in
+# (merged into this crate), so this feature only preserves the cfg name.
+v1-compat = []
+
+# WASM build: uses web-sys fetch API for browser/WASM transports.
+wasm = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+]
+
+[dependencies]
+agent_events = { path = "../core/agent_events" }
+subtle = { version = "2", default-features = false }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
+zeroize = { workspace = true }
+# Internal dependencies
+did = { path = "../did" }
+agent_core = { path = "../core/agent_core" }
+
+# DIDComm v2 (SICPA didcomm-rust, Ajna fork with WASM fixes) — renamed to avoid
+# clashing with this crate's own name (`didcomm`).
+sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+
+# Async
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+bs58 = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Cryptography (v1)
+aries-askar = { workspace = true }
+chacha20poly1305 = "0.10"  # XChaCha20-Poly1305 AEAD
+ml-kem = { workspace = true }
+kem = { workspace = true }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = { workspace = true }
+hkdf = "0.12"
+sha2 = { workspace = true }
+
+# Key encoding for v1/v2 compatibility
+multibase = "0.9"
+
+# Utilities
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+rand = "0.8"
+
+# ============================================================================
+# NATIVE ONLY (transports)
+# ============================================================================
+
+# HTTP Server (Axum) - native only
+axum = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+
+# HTTP Client (Reqwest) - native only
+reqwest = { workspace = true, optional = true }
+
+# WebSocket Client (Tungstenite) - native only
+tokio-tungstenite = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+
+# ============================================================================
+# WASM ONLY (transports)
+# ============================================================================
+
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+    "Window",
+    "WorkerGlobalScope",
+]}
+
+# Tokio with full features for native, minimal for WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tower = "0.4"  # For testing Axum services
+hyper = { workspace = true }
+hex = "0.4"
+
+[lints]
+workspace = true

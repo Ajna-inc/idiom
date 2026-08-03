@@ -1,0 +1,41 @@
+[package]
+name = "protocol_basic_messages"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent_core = { path = "../../core/agent_core" }
+agent_events = { path = "../../core/agent_events", optional = true }
+didcomm = { path = "../../didcomm" }
+protocol_connections = { path = "../connections", default-features = false }
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+# Tokio with full features for native, minimal for WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+
+[features]
+default = ["events", "native"]
+events = ["agent_events"]
+native = ["protocol_connections/native"]
+wasm = ["protocol_connections/wasm"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

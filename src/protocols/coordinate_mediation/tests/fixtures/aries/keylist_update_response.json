@@ -1,0 +1,8 @@
+{
+  "@type": "https://didcomm.org/coordinate-mediation/1.0/keylist-update-response",
+  "@id": "3f6b04c-2c69-4d12-b9bf-3a17f7b53b1c",
+  "~thread": { "thid": "th-1" },
+  "updated": [
+    { "recipient_key": "did:key:zABC", "action": "add", "result": "success" }
+  ]
+}

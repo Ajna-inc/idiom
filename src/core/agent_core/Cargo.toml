@@ -1,0 +1,44 @@
+[package]
+name = "agent_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["native"]
+native = []
+wasm = []
+
+[dependencies]
+# Async
+async-trait = "0.1"
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities - uuid needs different features for native vs WASM
+chrono = { workspace = true }
+
+# Native: standard uuid and tokio with time feature
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.42", features = ["sync", "time"] }
+uuid = { workspace = true }
+
+# WASM: uuid with js feature for random generation
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+uuid = { version = "1.18", features = ["v4", "serde", "js"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

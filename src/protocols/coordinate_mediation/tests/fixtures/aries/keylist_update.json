@@ -1,0 +1,8 @@
+{
+  "@type": "https://didcomm.org/coordinate-mediation/1.0/keylist-update",
+  "@id": "5e3b04c-2c69-4d12-b9bf-3a17f7b53b1c",
+  "updates": [
+    { "recipient_key": "did:key:zABC", "action": "add" },
+    { "recipient_key": "did:key:zDEF", "action": "remove" }
+  ]
+}

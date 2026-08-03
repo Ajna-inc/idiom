@@ -1,0 +1,56 @@
+[package]
+name = "protocol_signing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "DIDComm Signing Protocol 1.0 - single-signer and N-of-M threshold signing"
+
+[dependencies]
+# Async runtime
+async-trait = "0.1"
+tokio = { version = "1", features = ["sync", "time"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+
+# UUID for message/session IDs
+uuid = { version = "1", features = ["v4"] }
+
+# Base64 encoding (for signatures, HPKE ciphertexts)
+base64 = "0.21"
+
+# Timestamps
+chrono = { version = "0.4", features = ["serde"] }
+
+# HPKE primitives (already in workspace lockfile via aries-askar)
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
+aes-gcm = "0.10"
+rand = "0.8"
+
+# Internal workspace deps
+agent_core = { path = "../../core/agent_core" }
+agent_events = { path = "../../core/agent_events" }
+did = { path = "../../did" }
+didcomm = { path = "../../didcomm" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# Disable NEON assembly on iOS for blake3 if ever added
+
+[lints]
+workspace = true

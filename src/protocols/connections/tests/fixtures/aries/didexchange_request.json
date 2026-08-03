@@ -1,0 +1,10 @@
+{
+  "@type": "https://didcomm.org/didexchange/1.1/request",
+  "@id": "9b6c44a9-72e6-4f0a-9af0-69ec0e57b9a4",
+  "label": "Faber",
+  "did": "did:peer:2.Ez6LSn...etc",
+  "~thread": {
+    "thid": "ff8c61c0-2acd-4ee1-8f6e-2c4316f7a9bd",
+    "pthid": "6e1f1b03-6f1f-4e3e-9e8d-7a5e7a5e7a5e"
+  }
+}

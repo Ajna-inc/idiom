@@ -1,0 +1,6 @@
+{
+  "@type": "https://didcomm.org/messagepickup/2.0/messages-received",
+  "@id": "3f6b04c-2c69-4d12-b9bf-3a17f7b53b1c",
+  "~thread": { "thid": "th-orig" },
+  "message_id_list": ["m-1", "m-2", "m-3"]
+}

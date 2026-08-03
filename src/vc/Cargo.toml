@@ -1,0 +1,99 @@
+[package]
+name = "vc"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# AnonCreds (optional — pulls openssl which breaks iOS cross-compilation)
+anoncreds_core = { path = "../credentials/anoncreds_core", optional = true }
+
+# Agent / wallet / storage / DID integration (umbrella crates)
+agent_core = { path = "../core/agent_core" }
+wallet = { path = "../wallet" }
+storage = { path = "../storage" }
+did = { path = "../did" }
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# JWT support
+jsonwebtoken.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Async
+async-trait.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+# Encoding
+base64.workspace = true
+bs58.workspace = true
+multibase.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+# Cryptography for signature verification
+ed25519-dalek = { version = "2.0", features = ["pkcs8"] }
+p256 = { version = "0.13", features = ["ecdsa"] }
+
+# Data Integrity Proof verification (eddsa-jcs-2022 + eddsa-rdfc-2022).
+# - serde_jcs:   RFC 8785 JSON Canonicalization for the JCS cryptosuite.
+# - json-ld:     JSON-LD expansion + JSON-LD-to-RDF for the RDFC pipeline.
+# - rdf-canon:   W3C RDF Dataset Canonicalization 1.0 (URDNA2015).
+# - iref/rdf-types: IRI + RDF building blocks the json-ld API exposes.
+serde_jcs = "0.2"
+json-ld = "0.21"
+rdf-canon = "0.15"
+oxrdf = "0.2"
+iref = "3"
+rdf-types = "0.22"
+static-iref = "3"
+locspan = "0.8"
+json-syntax = "0.12"
+
+# CBOR and COSE for mDoc
+serde_cbor = "0.11"
+coset = "0.3"
+
+# Utilities
+uuid.workspace = true
+url.workspace = true
+rand = "0.8"
+
+# HTTP client for context loading
+reqwest = { workspace = true, features = ["json"] }
+
+# GZIP inflate for status lists — only pulled in by the `status-list-gzip` feature.
+flate2 = { version = "1", optional = true }
+
+[dev-dependencies]
+# Testing
+tokio = { workspace = true, features = ["test-util", "macros"] }
+rstest.workspace = true
+tokio-test = "0.4"
+
+[features]
+default = []
+anoncreds = ["anoncreds_core"]
+# These gate dormant code paths outside the minimal SSI build. `bbs` (BBS+
+# signatures) is a pure `#[cfg]` gate with no extra deps; `status-list-gzip`
+# pulls in `flate2` for spec-mandated GZIP inflation of status lists.
+bbs = []
+status-list-gzip = ["dep:flate2"]
+
+[lints]
+workspace = true

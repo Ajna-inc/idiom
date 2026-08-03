@@ -1,0 +1,151 @@
+[
+  {
+    "type": "function",
+    "name": "issueCredential",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "revokeCredential",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getStatus",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isRevoked",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isActive",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CredentialIssued",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "issuer",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "issuedAt",
+        "type": "uint64",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CredentialRevoked",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "credIdHash",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "issuer",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "revokedAt",
+        "type": "uint64",
+        "indexed": false
+      }
+    ]
+  }
+]

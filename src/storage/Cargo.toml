@@ -1,0 +1,55 @@
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core traits
+agent_core = { path = "../core/agent_core" }
+
+# Askar - encrypted storage backend
+aries-askar = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["sync"] }
+async-trait = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Serialization
+serde_json = { workspace = true }
+
+# kanon backend (Postgres) — optional, behind the `kanon` feature
+sqlx = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+# kanon wallet: at-rest AEAD + quantum key crypto (classical reuses askar LocalKey)
+aes-gcm = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+crypto = { path = "../crypto", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+# For the kanon conformance test (only compiled under --features kanon).
+sqlx = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+default = []
+# Kanon Postgres storage backend (matches the ACA-Py kanon_storage schema).
+kanon = [
+    "dep:sqlx",
+    "dep:uuid",
+    "dep:chrono",
+    "dep:base64",
+    "dep:aes-gcm",
+    "dep:sha2",
+    "dep:rand",
+    "dep:crypto",
+]
+
+[lints]
+workspace = true

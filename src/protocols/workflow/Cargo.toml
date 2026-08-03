@@ -1,0 +1,45 @@
+[package]
+name = "protocol_workflow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Workspace crates
+agent_core = { path = "../../core/agent_core" }
+agent_events = { path = "../../core/agent_events", optional = true }
+didcomm = { path = "../../didcomm" }
+
+# Async
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Template hashing
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# Guard evaluation (JMESPath expressions)
+jmespath = "0.5"
+
+[features]
+default = []
+events = ["dep:agent_events"]
+
+[lints]
+workspace = true

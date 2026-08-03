@@ -1,0 +1,49 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::messages::ResumeMessage;
+use crate::queue::command_queue::PersistentCommandQueue;
+use crate::repository::command_record::CommandType;
+use didcomm::messaging::handlers::{
+    InboundMessage, MessageHandler, MessageHandlerError, OutboundMessage,
+};
+
+pub struct ResumeHandler {
+    command_queue: Arc<PersistentCommandQueue>,
+}
+
+impl ResumeHandler {
+    pub fn new(command_queue: Arc<PersistentCommandQueue>) -> Self {
+        Self { command_queue }
+    }
+}
+
+#[async_trait]
+impl MessageHandler for ResumeHandler {
+    fn supported_types(&self) -> Vec<String> {
+        vec![ResumeMessage::TYPE.to_string()]
+    }
+
+    async fn handle(
+        &self,
+        inbound: InboundMessage,
+    ) -> std::result::Result<Option<OutboundMessage>, MessageHandlerError> {
+        let resume_msg: ResumeMessage = serde_json::from_value(inbound.message.body.clone())
+            .map_err(|e| MessageHandlerError::InvalidMessage(e.to_string()))?;
+
+        self.command_queue
+            .enqueue(
+                CommandType::Resume,
+                &resume_msg.instance_id,
+                inbound.context.connection_id.as_deref(),
+                None,
+                serde_json::to_value(&resume_msg)
+                    .map_err(|e| MessageHandlerError::ProcessingFailed(e.to_string()))?,
+            )
+            .await
+            .map_err(|e| MessageHandlerError::ProcessingFailed(e.to_string()))?;
+
+        Ok(None)
+    }
+}

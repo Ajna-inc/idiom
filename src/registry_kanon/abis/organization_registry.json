@@ -1,0 +1,175 @@
+[
+  {
+    "type": "function",
+    "name": "isApprovedAndActive",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isMember",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      },
+      {
+        "name": "who",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isAdmin",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      },
+      {
+        "name": "who",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "registerOrg",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      },
+      {
+        "name": "admin",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "addMember",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      },
+      {
+        "name": "member",
+        "type": "address"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "approveOrg",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getOrg",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "did",
+            "type": "string"
+          },
+          {
+            "name": "admin",
+            "type": "address"
+          },
+          {
+            "name": "approved",
+            "type": "bool"
+          },
+          {
+            "name": "suspended",
+            "type": "bool"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "approvedAt",
+            "type": "uint64"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "OrgRegistered",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "did",
+        "type": "string",
+        "indexed": false
+      },
+      {
+        "name": "admin",
+        "type": "address",
+        "indexed": true
+      }
+    ]
+  }
+]

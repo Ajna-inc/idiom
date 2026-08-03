@@ -1,0 +1,8 @@
+{
+  "@type": "https://didcomm.org/didexchange/1.1/response",
+  "@id": "0e96b04c-2c69-4d12-b9bf-3a17f7b53b1c",
+  "did": "did:peer:2.Ez6LSnRESPONDER",
+  "~thread": {
+    "thid": "ff8c61c0-2acd-4ee1-8f6e-2c4316f7a9bd"
+  }
+}

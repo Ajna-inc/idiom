@@ -1,0 +1,21 @@
+{
+  "@type": "https://didcomm.org/messagepickup/2.0/delivery",
+  "@id": "delivery-id-1",
+  "~thread": { "thid": "97cba1de-65ab-44c6-a3ad-7d3ba61e4cdf" },
+  "~attach": [
+    {
+      "@id": "m-1",
+      "lastmod_time": "2026-05-10T00:00:00Z",
+      "data": {
+        "json": { "protected": "encrypted-jwe-1", "ciphertext": "..." }
+      }
+    },
+    {
+      "@id": "m-2",
+      "lastmod_time": "2026-05-10T00:00:01Z",
+      "data": {
+        "json": { "protected": "encrypted-jwe-2", "ciphertext": "..." }
+      }
+    }
+  ]
+}

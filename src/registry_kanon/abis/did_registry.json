@@ -1,0 +1,376 @@
+[
+  {
+    "type": "function",
+    "name": "registerDID",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32"
+      },
+      {
+        "name": "doc",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "controller",
+            "type": "address"
+          },
+          {
+            "name": "orgId",
+            "type": "bytes32"
+          },
+          {
+            "name": "scope",
+            "type": "uint8"
+          },
+          {
+            "name": "verificationMethods",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "vmType",
+                "type": "uint8"
+              },
+              {
+                "name": "publicKey",
+                "type": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "authentication",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "assertionMethod",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityInvocation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityDelegation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "keyAgreement",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "services",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "serviceType",
+                "type": "string"
+              },
+              {
+                "name": "endpoint",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "name": "docHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64"
+          },
+          {
+            "name": "deactivated",
+            "type": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "updateDID",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      },
+      {
+        "name": "doc",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "controller",
+            "type": "address"
+          },
+          {
+            "name": "orgId",
+            "type": "bytes32"
+          },
+          {
+            "name": "scope",
+            "type": "uint8"
+          },
+          {
+            "name": "verificationMethods",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "vmType",
+                "type": "uint8"
+              },
+              {
+                "name": "publicKey",
+                "type": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "authentication",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "assertionMethod",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityInvocation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityDelegation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "keyAgreement",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "services",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "serviceType",
+                "type": "string"
+              },
+              {
+                "name": "endpoint",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "name": "docHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64"
+          },
+          {
+            "name": "deactivated",
+            "type": "bool"
+          }
+        ]
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "resolveDID",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "controller",
+            "type": "address"
+          },
+          {
+            "name": "orgId",
+            "type": "bytes32"
+          },
+          {
+            "name": "scope",
+            "type": "uint8"
+          },
+          {
+            "name": "verificationMethods",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "vmType",
+                "type": "uint8"
+              },
+              {
+                "name": "publicKey",
+                "type": "bytes"
+              }
+            ]
+          },
+          {
+            "name": "authentication",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "assertionMethod",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityInvocation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "capabilityDelegation",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "keyAgreement",
+            "type": "bytes32[]"
+          },
+          {
+            "name": "services",
+            "type": "tuple[]",
+            "components": [
+              {
+                "name": "id",
+                "type": "bytes32"
+              },
+              {
+                "name": "serviceType",
+                "type": "string"
+              },
+              {
+                "name": "endpoint",
+                "type": "string"
+              }
+            ]
+          },
+          {
+            "name": "docHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "updatedAt",
+            "type": "uint64"
+          },
+          {
+            "name": "deactivated",
+            "type": "bool"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "deactivateDID",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "exists",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isDeactivated",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "controllerOf",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "did",
+        "type": "string"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  }
+]

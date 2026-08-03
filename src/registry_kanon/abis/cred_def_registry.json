@@ -1,0 +1,220 @@
+[
+  {
+    "type": "function",
+    "name": "registerCredentialDefinition",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "schemaId",
+        "type": "bytes32"
+      },
+      {
+        "name": "issuerPubKey",
+        "type": "bytes"
+      },
+      {
+        "name": "policyMask",
+        "type": "uint8"
+      },
+      {
+        "name": "uri",
+        "type": "string"
+      },
+      {
+        "name": "issuerZkPubKeyAx",
+        "type": "uint256"
+      },
+      {
+        "name": "issuerZkPubKeyAy",
+        "type": "uint256"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "exists",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isActive",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "supportsTier",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "tier",
+        "type": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "getCredentialDefinition",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "schemaId",
+            "type": "bytes32"
+          },
+          {
+            "name": "issuerOrg",
+            "type": "bytes32"
+          },
+          {
+            "name": "issuerPubKey",
+            "type": "bytes"
+          },
+          {
+            "name": "policyMask",
+            "type": "uint8"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "deprecated",
+            "type": "bool"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "getIssuerZkPubKey",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "ax",
+            "type": "uint256"
+          },
+          {
+            "name": "ay",
+            "type": "uint256"
+          },
+          {
+            "name": "set",
+            "type": "bool"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CredentialDefinitionRegistered",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "schemaId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "issuerOrg",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "policyMask",
+        "type": "uint8",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "IssuerZkPubKeySet",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "ax",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "ay",
+        "type": "uint256",
+        "indexed": false
+      }
+    ]
+  }
+]

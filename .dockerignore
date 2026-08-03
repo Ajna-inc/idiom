@@ -1,0 +1,7 @@
+# Keep the Docker build context small + reproducible.
+src/target/
+**/target/
+interop-tests/node_modules/
+interop-tests/logs/
+docs/
+.git/

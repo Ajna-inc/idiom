@@ -1,0 +1,46 @@
+[package]
+name = "protocol_poe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+# Proof of Execution (PoE) 1.0 — DIDComm v2 protocol for requesting/returning
+# zero-knowledge proofs that a named program executed correctly on inputs bound
+# to a transaction context, without revealing private inputs.
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+# Native cross-platform halo2 prover (crates.io halo2; builds for iOS/Android).
+# Vendored in-repo so the idiom workspace resolves without external checkouts;
+# only compiled when `halo2-prove` is enabled, so vilko/default builds skip it.
+poe-prover = { path = "../../poe_prover", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[features]
+default = []
+# Real halo2-kzg verification via the `ezkl` binary (desktop/server verifier).
+ezkl-cli = []
+# Native halo2 (IPA) prover + verifier — the cross-platform mobile engine.
+halo2-prove = ["dep:poe-prover"]
+
+[lints]
+workspace = true

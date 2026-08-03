@@ -1,0 +1,45 @@
+[package]
+name = "crypto"
+version = "0.1.0"
+edition = "2021"
+description = "Merged crypto crate: PQC signatures (SLH-DSA / ML-DSA) + Sanskrit SID library for the SSI wallet"
+license = "Apache-2.0"
+
+[dependencies]
+# Post-Quantum Cryptography (NIST FIPS Standards)
+fips204 = "0.4"  # ML-DSA-65 (validator signatures)
+fips205 = "0.4"  # SLH-DSA-SHAKE-128s (user signatures)
+
+# SCALE codec + secret zeroing used by the signature key types
+parity-scale-codec = { version = "3.6", default-features = false, features = ["derive"] }
+zeroize = { version = "1.7", features = ["derive"] }
+
+# Hashing / encoding used by key fingerprint + did helpers
+blake3 = "1"
+bs58 = "0.5"
+hex = "0.4"
+
+# RNG (deterministic keypair derivation)
+rand = "0.8"
+rand_chacha = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling (SID module)
+thiserror = "1.0"
+
+# iOS-specific: disable blake3 NEON assembly (causes ___chkstk_darwin linker error)
+[target.'cfg(target_os = "ios")'.dependencies]
+blake3 = { version = "1", default-features = false }
+
+[features]
+default = ["serde"]
+# `serde` gates the Serialize/Deserialize impls on SID types (serde is always
+# compiled; this feature just toggles those derives). On by default, matching
+# the original ajna_sid crate.
+serde = []
+
+[lints]
+workspace = true

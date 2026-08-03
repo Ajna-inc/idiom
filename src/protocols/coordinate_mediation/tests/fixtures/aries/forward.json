@@ -1,0 +1,6 @@
+{
+  "@type": "https://didcomm.org/routing/1.0/forward",
+  "@id": "msg-id",
+  "to": "did:key:zRecipient",
+  "msg": { "protected": "...", "ciphertext": "..." }
+}

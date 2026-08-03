@@ -1,0 +1,74 @@
+[package]
+name = "did"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# The `native`/`wasm` cfg names are preserved so existing
+# `#[cfg(feature = "native")]` / `#[cfg(feature = "wasm")]` code still compiles.
+# They no longer gate dependencies: storage/wallet/crypto are now normal deps
+# and `methods` is an always-present module.
+default = ["native"]
+native = []
+wasm = []
+# Declared (empty) so the `#[cfg(feature = "dht")]`-gated code (did:dht method)
+# is recognised by the compiler; it stays dormant (never enabled here).
+dht = []
+
+[dependencies]
+# Internal umbrella crates
+agent_core = { path = "../core/agent_core" }
+wallet = { path = "../wallet" }
+storage = { path = "../storage" }
+crypto = { path = "../crypto" }
+
+# External DID method crates (from did_methods)
+did-peer = "0.7"             # Affinidi's did:peer library
+affinidi-did-common = "0.1"  # For did-peer Document type
+curve25519-dalek = "4.1"     # Ed25519 to X25519 conversion
+reqwest = { workspace = true }
+
+# Caching (from did_registry)
+lru = { workspace = true }
+
+# Serialization / MessagePack (from did_ajna)
+rmp-serde = "1.1"
+
+# Cryptography (union of did_methods / did_ajna)
+sha2 = { workspace = true }
+blake3 = "1.5"
+hex = { workspace = true }
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+bs58 = { workspace = true }
+multibase = { workspace = true }
+
+# Sync (from did_ajna)
+bloom = "0.3"
+
+# Logging (from did_ajna)
+tracing = { workspace = true }
+
+# Standard workspace deps (union across all members)
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio = { workspace = true }
+
+# iOS-specific: disable blake3 NEON assembly (from did_ajna)
+[target.'cfg(target_os = "ios")'.dependencies]
+blake3 = { version = "1.5", default-features = false }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+mockito = "1.2"    # For mocking HTTP requests in did:web tests
+tokio-test = "0.4" # From did_ajna dev-deps
+
+[lints]
+workspace = true

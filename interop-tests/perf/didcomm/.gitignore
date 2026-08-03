@@ -1,0 +1,6 @@
+# session/benchmark data — never commit (contains key ciphertext, tokens, captured traffic)
+seed/
+corpus.ndjson
+conns.json
+conns-live.json
+.conn.json

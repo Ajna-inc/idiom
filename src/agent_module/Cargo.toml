@@ -1,0 +1,18 @@
+[package]
+name = "agent_module"
+version = "0.1.0"
+edition = "2021"
+description = "Pluggable agent module contract: AgentModule trait + ModuleContext. Lets consumers compose an agent from independently-defined modules instead of the agent hardcoding them."
+
+[dependencies]
+agent_core = { path = "../core/agent_core" }
+agent_di = { path = "../core/agent_di" }
+agent_events = { path = "../core/agent_events" }
+didcomm = { path = "../didcomm" }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

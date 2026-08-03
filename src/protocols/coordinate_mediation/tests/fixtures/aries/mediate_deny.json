@@ -1,0 +1,5 @@
+{
+  "@type": "https://didcomm.org/coordinate-mediation/1.0/mediate-deny",
+  "@id": "1234",
+  "~thread": { "thid": "th-1" }
+}

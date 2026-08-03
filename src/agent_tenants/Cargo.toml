@@ -1,0 +1,27 @@
+[package]
+name = "agent_tenants"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Minimal multi-tenant substrate carried over from essi-rs: only the
+# profile-scoped Storage/Wallet provider wrappers that the idiom-agent-api
+# service depends on (the full tenant_store/session/room machinery is not
+# ported into the minimal idiom build).
+
+[dependencies]
+agent_core = { path = "../core/agent_core" }
+arc-swap = "1"
+aries-askar = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

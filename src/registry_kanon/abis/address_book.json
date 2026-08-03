@@ -1,0 +1,128 @@
+[
+  {
+    "type": "function",
+    "name": "registries",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "organizationRegistry",
+            "type": "address"
+          },
+          {
+            "name": "didRegistry",
+            "type": "address"
+          },
+          {
+            "name": "schemaRegistry",
+            "type": "address"
+          },
+          {
+            "name": "credentialDefinitionRegistry",
+            "type": "address"
+          },
+          {
+            "name": "merkleStateRegistry",
+            "type": "address"
+          },
+          {
+            "name": "anonCredsStatusRegistry",
+            "type": "address"
+          },
+          {
+            "name": "halo2VerifierRegistry",
+            "type": "address"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "organizationRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "didRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "schemaRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "credentialDefinitionRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "merkleStateRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "anonCredsStatusRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "halo2VerifierRegistry",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  }
+]

@@ -1,0 +1,5 @@
+{
+  "@type": "https://didcomm.org/messagepickup/2.0/live-delivery-change",
+  "@id": "live-toggle-1",
+  "live_delivery": true
+}

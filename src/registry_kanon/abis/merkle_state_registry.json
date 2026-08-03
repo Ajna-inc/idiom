@@ -1,0 +1,307 @@
+[
+  {
+    "type": "function",
+    "name": "batchUpdate",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "addedLeavesKeccak",
+        "type": "bytes32[]"
+      },
+      {
+        "name": "addedLeavesPoseidon",
+        "type": "bytes32[]"
+      },
+      {
+        "name": "revokedLeavesKeccak",
+        "type": "bytes32[]"
+      },
+      {
+        "name": "revokedLeavesPoseidon",
+        "type": "bytes32[]"
+      },
+      {
+        "name": "newRootKeccak",
+        "type": "bytes32"
+      },
+      {
+        "name": "newRootPoseidon",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "consumeOneTime",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "credId",
+        "type": "bytes32"
+      },
+      {
+        "name": "proof",
+        "type": "bytes32[]"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "verifyZKMembership",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "proof",
+        "type": "bytes"
+      },
+      {
+        "name": "publicSignals",
+        "type": "bytes32[]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "initializeCredDefState",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "initialKeccakRoot",
+        "type": "bytes32"
+      },
+      {
+        "name": "initialPoseidonRoot",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getState",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "rootKeccak",
+            "type": "bytes32"
+          },
+          {
+            "name": "rootPoseidon",
+            "type": "bytes32"
+          },
+          {
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "name": "lastUpdated",
+            "type": "uint64"
+          },
+          {
+            "name": "issuedCount",
+            "type": "uint256"
+          },
+          {
+            "name": "revokedCount",
+            "type": "uint256"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isRecentKeccakRoot",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "root",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isRecentPoseidonRoot",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "root",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "zkVerifierOf",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isNullifierUsed",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32"
+      },
+      {
+        "name": "nullifier",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CredentialAdded",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "leafKeccak",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "leafPoseidon",
+        "type": "bytes32",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "CredentialRevoked",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "leafKeccak",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "leafPoseidon",
+        "type": "bytes32",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "RootsUpdated",
+    "anonymous": false,
+    "inputs": [
+      {
+        "name": "credDefId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "epoch",
+        "type": "uint64",
+        "indexed": true
+      },
+      {
+        "name": "newRootKeccak",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "newRootPoseidon",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "added",
+        "type": "uint256",
+        "indexed": false
+      },
+      {
+        "name": "revoked",
+        "type": "uint256",
+        "indexed": false
+      }
+    ]
+  }
+]

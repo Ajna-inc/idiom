@@ -1,0 +1,43 @@
+[package]
+name = "agent_events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agent_core = { path = "../agent_core" }
+
+# Async
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = "0.1"
+futures-core = "0.3"
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+
+# Logging (used for warn! on broadcast Lagged events)
+tracing = "0.1"
+
+# Tokio with full features for native, minimal for WASM
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[lints]
+workspace = true

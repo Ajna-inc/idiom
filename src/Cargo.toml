@@ -1,0 +1,167 @@
+[workspace]
+resolver = "2"
+
+members = [
+    # Foundation
+    "core/agent_core",
+    "core/agent_di",
+    "core/agent_events",
+    "agent_module",
+    # Merged umbrella crates
+    "crypto",
+    "storage",
+    "wallet",
+    "did",
+    "didcomm",
+    "vc",
+    # DIDComm protocols (independent crates)
+    "protocols/oob",
+    "protocols/connections",
+    "protocols/basic_messages",
+    "protocols/user_profile",
+    "protocols/coordinate_mediation",
+    "protocols/pickup",
+    "protocols/push_notifications",
+    "protocols/workflow",
+    "protocols/signing",
+    "protocols/credentials",
+    "protocols/proofs",
+    "protocols/poe",
+    "poe_prover",
+    # Mediator server
+    "mediator_server",
+    # Credentials / documents
+    "credentials/anoncreds_core",
+    "credentials/mdoc",
+    # Kanon VDR + multi-tenant provider wrappers (for idiom-agent-api)
+    "registry_kanon",
+    "agent_tenants",
+    # Top-level agent
+    "agent",
+    # Unified performance/load harness (DIDComm + credentials + AnonCreds)
+    "perf",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+authors = ["Ajna Contributors <team@ajna.io>"]
+license = "Apache-2.0"
+repository = "https://github.com/Ajna-inc/essi"
+homepage = "https://github.com/Ajna-inc/essi"
+
+# Workspace-wide lint policy. CI runs `cargo clippy --all-targets -- -D warnings`,
+# so anything not explicitly allowed here fails the build. The lints below are
+# design-level or stylistic (not bug indicators) and are permitted deliberately:
+#   - type_complexity / too_many_arguments: repository generics and crypto/
+#     protocol APIs that genuinely need the shape they have.
+#   - result_large_err: broadcast SendError<Event> carries a large payload by design.
+#   - module_inception: the `registry::registry` layout is intentional.
+#   - should_implement_trait: inherent `from_str`/`default`/`name` helpers kept
+#     for ergonomics without changing public trait surface.
+#   - doc_lazy_continuation: cosmetic doc-list indentation, not worth churn.
+# Each member crate opts in with `[lints] workspace = true`.
+[workspace.lints.clippy]
+type_complexity = "allow"
+too_many_arguments = "allow"
+result_large_err = "allow"
+module_inception = "allow"
+should_implement_trait = "allow"
+doc_lazy_continuation = "allow"
+doc_overindented_list_items = "allow"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP & networking
+axum = { version = "0.7", features = ["ws"] }
+reqwest = { version = "0.12", features = ["json"] }
+hyper = "1.0"
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Cryptography & SSI
+# Using Ajna fork with BLS crypto fix (.into_option() -> .into())
+aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main", features = ["sqlite", "postgres"] }
+anoncreds = { git = "https://github.com/hyperledger/anoncreds-rs", tag = "v0.2.0", default-features = false, features = ["w3c", "zeroize"] }
+# SICPA DIDComm v2 implementation (Ajna fork)
+didcomm = { git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+
+# Dependency injection
+shaku = "0.6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+# SQL backend for the kanon storage provider (Postgres, matching the ACA-Py
+# kanon_storage plugin schema). Runtime queries only (no compile-time DB).
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "json",
+    "uuid",
+    "chrono",
+] }
+bs58 = "0.5"
+multibase = "0.9"
+base64 = "0.21"
+url = "2.5"
+notify = "6.1"
+
+# Cryptography for credentials
+sha2 = "0.10"
+hex = "0.4"
+jsonwebtoken = "9.0"
+
+# Testing
+rstest = "0.23"
+mockall = "0.13"
+
+# MLS group encryption (RFC 9420)
+openmls = { version = "0.8", default-features = false }
+openmls_rust_crypto = "0.5"
+openmls_basic_credential = "0.5"
+openmls_traits = "0.5"
+
+# Post-quantum cryptography (NIST FIPS 203/204)
+ml-kem = "0.2"
+kem = "=0.3.0-pre.0"
+
+# Content encryption & tenant isolation
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["derive"] }
+dashmap = "6"
+
+# Mesh networking
+lru = "0.12"
+serde_bytes = "0.11"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = "0.8"
+prost = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = false  # Keep symbols for FFI exports
+
+[profile.dev]
+opt-level = 0
+debug = true

@@ -1,0 +1,72 @@
+[package]
+name = "mediator_server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "mediator-server"
+path = "src/main.rs"
+
+[dependencies]
+# Internal crates
+agent_core = { path = "../core/agent_core" }
+storage = { path = "../storage" }
+wallet = { path = "../wallet" }
+did = { path = "../did" }
+didcomm = { path = "../didcomm" }
+protocol_coordinate_mediation = { path = "../protocols/coordinate_mediation" }
+protocol_pickup = { path = "../protocols/pickup" }
+protocol_push_notifications = { path = "../protocols/push_notifications" }
+protocol_oob = { path = "../protocols/oob" }
+protocol_connections = { path = "../protocols/connections" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Web framework
+axum = { workspace = true, features = ["multipart"] }
+tower-http = { version = "0.6", features = ["limit"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+base64 = { workspace = true }
+futures-util = { workspace = true }
+bs58 = { workspace = true }
+multibase = { workspace = true }
+
+# Crypto — SICPA didcomm renamed to avoid clash with the `didcomm` umbrella crate.
+# (Ed25519↔X25519 conversion is delegated to `did::methods`.)
+sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+
+# Push notifications: HTTP client for FCM v1 + service-account JWT signing
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+jsonwebtoken = "9"
+
+# Observability
+prometheus = "0.13"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+reqwest = { workspace = true }
+axum = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+
+[lints]
+workspace = true

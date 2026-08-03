@@ -1,0 +1,99 @@
+[
+  {
+    "type": "function",
+    "name": "registerSchema",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "orgId",
+        "type": "bytes32"
+      },
+      {
+        "name": "schemaId",
+        "type": "bytes32"
+      },
+      {
+        "name": "schemaHash",
+        "type": "bytes32"
+      },
+      {
+        "name": "location",
+        "type": "string"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getSchema",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "schemaId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          {
+            "name": "issuerOrg",
+            "type": "bytes32"
+          },
+          {
+            "name": "schemaHash",
+            "type": "bytes32"
+          },
+          {
+            "name": "uri",
+            "type": "string"
+          },
+          {
+            "name": "createdAt",
+            "type": "uint64"
+          },
+          {
+            "name": "deprecated",
+            "type": "bool"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "exists",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "schemaId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "isActive",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "schemaId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool"
+      }
+    ]
+  }
+]

@@ -1,0 +1,40 @@
+{
+  "name": "idiom-interop-tests",
+  "version": "0.1.0",
+  "description": "Live DIDComm interoperability tests between Credo-TS and the idiom Rust agent (mediated via mediator.ajna.surf)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "interop": "./scripts/run-interop.sh",
+    "agents:start": "./scripts/manage-agents.sh start",
+    "agents:stop": "./scripts/manage-agents.sh stop",
+    "agents:restart": "./scripts/manage-agents.sh restart",
+    "agents:status": "./scripts/manage-agents.sh status",
+    "start:credo": "tsx agents/start-credo.ts",
+    "start:rust": "cd ../src/agent && cargo run --example http_server --features http-server"
+  },
+  "dependencies": {
+    "@credo-ts/askar": "^0.5.13",
+    "@credo-ts/core": "^0.5.13",
+    "@credo-ts/node": "^0.5.13",
+    "@credo-ts/openid4vc": "^0.5.19",
+    "@hyperledger/aries-askar-nodejs": "^0.2.3",
+    "@hyperledger/aries-askar-shared": "^0.2.3",
+    "axios": "^1.7.9",
+    "eventsource": "^2.0.2",
+    "express": "^5.1.0",
+    "rxjs": "^7.8.2",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/eventsource": "^1.1.15",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,55 @@
+# Rust build artifacts
+target/
+/src/target/
+**/*.rs.bk
+/src/.cargo/
+
+# NOTE: src/Cargo.lock is intentionally tracked. The minimal workspace reuses
+# idiom's lockfile to pin around a yanked transitive crate (core2 0.4.0);
+# committing it keeps the build reproducible. Do NOT ignore Cargo.lock here.
+
+# Native build outputs
+*.so
+*.dylib
+*.dll
+*.exe
+*.a
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+fly.toml
+
+# Secrets / credentials — never commit these. Fly secrets (STORAGE_KEY,
+# FIREBASE_CREDENTIALS_JSON, ADMIN_SESSION_SECRET) are set via `fly secrets`;
+# local runs read them from the environment / a firebase service-account file.
+.env
+.env.*
+*.pem
+*.key
+*.p8
+*.p12
+*service-account*.json
+*serviceaccount*.json
+firebase*.json
+*.credentials.json
+
+# Logs
+*.log
+/src/logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Test / tooling outputs
+test_output*.log
+udeps_report.txt
