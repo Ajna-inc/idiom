@@ -301,7 +301,7 @@ impl FcmPushNotifier {
 
     fn build_fcm_payload(&self, record: &DeviceInfoRecord) -> serde_json::Value {
         // One message envelope with both android: and apns: sub-blocks; FCM
-        // dispatches only the relevant one per token. 
+        // dispatches only the relevant one per token.
         // Data-only wake signal. We deliberately send NO top-level
         // `notification` block: the push is content-free (we only hold
         // encrypted blobs), and a single user action — a call in
