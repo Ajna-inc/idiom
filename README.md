@@ -38,7 +38,7 @@ interoperate with existing Aries agents (e.g. Credo/ACA-Py) on the wire.
 ## Repository layout
 
 ```
-rs_ssi_agent/
+idiom/
 ├── src/                    # Rust cargo workspace (all crates)
 ├── interop-tests/          # credo-ts interop suite + performance/e2e harness
 ├── Dockerfile              # builds the mediator server image
