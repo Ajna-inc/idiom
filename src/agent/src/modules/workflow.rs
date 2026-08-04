@@ -562,11 +562,24 @@ impl agent_module::AgentModule for WorkflowModule {
         self.set_send_callback(Arc::new(move |conn_id, type_uri, body| {
             let sender = sender.clone();
             Box::pin(async move {
-                let message = serde_json::json!({
+                // Correlate the DIDComm thread by the workflow instance_id
+                // (Aries/ACA-Py convention): peers 
+                // StartHandler — match `~thread.thid == body.instance_id`. Every
+                // workflow message body carries instance_id; without an explicit
+                // `~thread`, the peer falls back to our random `@id` and logs a
+                // "start correlation mismatch (thid != instance_id)".
+                let thid = body
+                    .get("instance_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let mut message = serde_json::json!({
                     "@type": type_uri,
                     "@id": uuid::Uuid::new_v4().to_string(),
                     "body": body,
                 });
+                if let Some(thid) = thid {
+                    message["~thread"] = serde_json::json!({ "thid": thid });
+                }
                 sender
                     .send_via_connection(&conn_id, &message)
                     .await
