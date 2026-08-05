@@ -84,3 +84,24 @@ jobs:
           OUT=$(CORPUS=/tmp/smoke.ndjson LEVELS=32 SLICE=250 ./target/release/idiom-perf replay)
           echo "$OUT"
           echo "$OUT" | grep -q "ok=250/250" || { echo "perf smoke FAILED (not all credentials issued)"; exit 1; }
+
+  security-audit:
+    name: security audit (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      # Fast prebuilt binary rather than compiling cargo-audit from source.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # Runs in ./src (workflow default), so it reads src/Cargo.lock and the
+      # src/.cargo/audit.toml ignore list. Fails on vulnerabilities; the
+      # unmaintained-crate advisories are warnings and do not fail the build.
+      - name: Audit dependencies for known vulnerabilities
+        run: cargo audit

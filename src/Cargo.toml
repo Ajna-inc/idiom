@@ -150,7 +150,7 @@ zeroize = { version = "1", features = ["derive"] }
 dashmap = "6"
 
 # Mesh networking
-lru = "0.12"
+lru = "0.16"
 serde_bytes = "0.11"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 rand = "0.8"

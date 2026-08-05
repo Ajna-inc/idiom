@@ -58,8 +58,10 @@ sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcom
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 jsonwebtoken = "9"
 
-# Observability
-prometheus = "0.13"
+# Observability. default-features=false drops the optional `protobuf` exposition
+# format (and its vulnerable protobuf 2.x dep, RUSTSEC-2024-0437); we only use
+# the text encoder.
+prometheus = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
