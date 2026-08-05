@@ -13,6 +13,8 @@ members = [
     "wallet",
     "did",
     "didcomm",
+    # Vendored SICPA DIDComm v2 lib (our editable fork of Ajna-inc/didcomm-rust).
+    "didcomm_sicpa",
     "vc",
     # DIDComm protocols (independent crates)
     "protocols/oob",
@@ -95,7 +97,9 @@ futures-util = "0.3"
 # Cryptography & SSI
 # Using Ajna fork with BLS crypto fix (.into_option() -> .into())
 aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main", features = ["sqlite", "postgres"] }
-anoncreds = { git = "https://github.com/hyperledger/anoncreds-rs", tag = "v0.2.0", default-features = false, features = ["w3c", "zeroize"] }
+# Ajna fork of anoncreds-rs (branched off upstream v0.2.0) so we can optimize the
+# CL signing / issuance hot path. `ajna-perf` == v0.2.0 until we land changes.
+anoncreds = { git = "https://github.com/Ajna-inc/anoncreds-rs", branch = "ajna-perf", default-features = false, features = ["w3c", "zeroize"] }
 # SICPA DIDComm v2 implementation (Ajna fork)
 didcomm = { git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
 
@@ -165,3 +169,9 @@ strip = false  # Keep symbols for FFI exports
 [profile.dev]
 opt-level = 0
 debug = true
+
+# Use our fork of anoncreds-clsignatures (background prime pool for the CL
+# e-prime) in place of the crates.io version, for every crate in the graph
+# (anoncreds-rs depends on it transitively).
+[patch.crates-io]
+anoncreds-clsignatures = { git = "https://github.com/Ajna-inc/anoncreds-clsignatures-rs", branch = "ajna-perf" }

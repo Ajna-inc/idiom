@@ -34,6 +34,12 @@ pub struct MessageProcessor {
     /// Shared HTTP client for outbound messages (reuses TCP connections via keep-alive).
     /// Creating a new client per message wastes 50-500ms on TLS/pool initialization.
     http_client: reqwest::Client,
+    /// Lock-free memoization of `sender_verkey → connection_id`. The verkey
+    /// fallback below otherwise loads the *entire* connection table and scans it
+    /// linearly on every inbound message whose sender DID doesn't directly match
+    /// a stored `their_did`; this turns that O(n) scan into an O(1) lookup once a
+    /// peer has been seen. Immutable once a connection is established.
+    verkey_to_conn: dashmap::DashMap<String, String>,
 }
 
 impl MessageProcessor {
@@ -62,6 +68,7 @@ impl MessageProcessor {
             agent_did,
             agent_key_id,
             envelope_service: RwLock::new(None),
+            verkey_to_conn: dashmap::DashMap::new(),
         }
     }
 
@@ -173,11 +180,18 @@ impl MessageProcessor {
             if found.is_none() {
                 let sender_verkey =
                     extract_verkey_from_did_key(sender).unwrap_or_else(|| sender.to_string());
-                if let Ok(all_conns) = self.connection_repository.get_all().await {
+                // Fast path: memoized verkey→connection index, so we don't reload
+                // and rescan the whole connection table for every message from an
+                // already-seen peer.
+                if let Some(cid) = self.verkey_to_conn.get(&sender_verkey) {
+                    found = Some(cid.clone());
+                } else if let Ok(all_conns) = self.connection_repository.get_all().await {
                     for c in &all_conns {
                         if let Some(ref their_key) = c.their_authentication_key_base58 {
                             if *their_key == sender_verkey {
                                 debug!("Resolved connection_id={} from verkey match", c.id);
+                                self.verkey_to_conn
+                                    .insert(sender_verkey.clone(), c.id.clone());
                                 found = Some(c.id.clone());
                                 break;
                             }

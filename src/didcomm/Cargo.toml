@@ -44,7 +44,7 @@ agent_core = { path = "../core/agent_core" }
 
 # DIDComm v2 (SICPA didcomm-rust, Ajna fork with WASM fixes) — renamed to avoid
 # clashing with this crate's own name (`didcomm`).
-sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+sicpa_didcomm = { path = "../didcomm_sicpa", features = ["uniffi"] }
 
 # Async
 async-trait = { workspace = true }

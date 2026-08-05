@@ -16,10 +16,27 @@ use agent_core::traits::{Key, KeyPurpose, KeyType, Signature, WalletProvider};
 use agent_core::{AgentError, Result};
 use aries_askar::kms::{KeyAlg, LocalKey};
 use async_trait::async_trait;
+use dashmap::DashMap;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::Row;
+use std::sync::Arc;
+
+/// Decrypted signing material held in the in-memory cache: the key metadata
+/// plus its plaintext secret bytes, so repeated signs skip both the Postgres
+/// `SELECT` and the AES-GCM unseal. Same trust model as the askar wallet's
+/// signing cache (secret key material resident in process memory).
+type KeyMaterial = Arc<(Key, Vec<u8>)>;
+
+/// Pool size for the kanon Postgres connections. Overridable so deployments can
+/// widen concurrency; the historical default of 16 caps in-flight DB ops.
+pub(crate) fn pool_size() -> u32 {
+    std::env::var("KANON_PG_POOL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(32)
+}
 
 use super::provider::map_sqlx;
 use super::DEFAULT_PROFILE_ID;
@@ -33,6 +50,10 @@ pub struct KanonWalletProvider {
     pool: PgPool,
     profile_id: String,
     cipher: Aes256Gcm,
+    /// key_id → decrypted signing material. Populated lazily on first use;
+    /// invalidated on delete. Removes the per-sign DB round-trip that otherwise
+    /// serializes DIDComm response packing under load.
+    sign_cache: DashMap<String, KeyMaterial>,
 }
 
 impl KanonWalletProvider {
@@ -40,7 +61,7 @@ impl KanonWalletProvider {
     /// from `passphrase`.
     pub async fn connect(database_url: &str, passphrase: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
-            .max_connections(16)
+            .max_connections(pool_size())
             .connect(database_url)
             .await
             .map_err(map_sqlx)?;
@@ -56,7 +77,24 @@ impl KanonWalletProvider {
             pool,
             profile_id: profile_id.to_string(),
             cipher,
+            sign_cache: DashMap::new(),
         })
+    }
+
+    /// Fetch decrypted signing material, using the in-memory cache when present.
+    /// On a miss, loads the row from Postgres, unseals it, and memoizes it.
+    async fn material(&self, key_id: &str) -> Result<KeyMaterial> {
+        if let Some(m) = self.sign_cache.get(key_id) {
+            return Ok(m.clone());
+        }
+        let (_, nonce, ct, key) = self
+            .fetch_row(key_id)
+            .await?
+            .ok_or_else(|| wallet_err(format!("Key not found: {key_id}")))?;
+        let secret = self.open(key_id, &nonce, &ct)?;
+        let material: KeyMaterial = Arc::new((key, secret));
+        self.sign_cache.insert(key_id.to_string(), material.clone());
+        Ok(material)
     }
 
     fn aad(&self, key_id: &str) -> Vec<u8> {
@@ -225,26 +263,25 @@ impl WalletProvider for KanonWalletProvider {
             .execute(&self.pool)
             .await
             .map_err(map_sqlx)?;
+        self.sign_cache.remove(key_id);
         Ok(())
     }
 
     async fn sign(&self, key_id: &str, data: &[u8]) -> Result<Signature> {
-        let (_, nonce, ct, key) = self
-            .fetch_row(key_id)
-            .await?
-            .ok_or_else(|| wallet_err(format!("Key not found: {key_id}")))?;
-        let secret = self.open(key_id, &nonce, &ct)?;
+        let material = self.material(key_id).await?;
+        let key = &material.0;
+        let secret: &[u8] = &material.1;
 
         let bytes = match key.key_type {
             KeyType::Ed25519 => {
-                let lk = LocalKey::from_secret_bytes(KeyAlg::Ed25519, &secret)
+                let lk = LocalKey::from_secret_bytes(KeyAlg::Ed25519, secret)
                     .map_err(|e| wallet_err(format!("load key failed: {e}")))?;
                 lk.sign_message(data, None)
                     .map_err(|e| wallet_err(format!("signing failed: {e}")))?
                     .to_vec()
             }
             KeyType::SLHDSA => {
-                let sk = crypto::slhdsa::UserSecretKey::from_bytes(&secret)
+                let sk = crypto::slhdsa::UserSecretKey::from_bytes(secret)
                     .map_err(|e| wallet_err(format!("invalid SLH-DSA secret: {e}")))?;
                 crypto::slhdsa::sign(data, &sk, b"")
                     .map_err(|e| wallet_err(format!("SLH-DSA signing failed: {e}")))?
@@ -252,7 +289,7 @@ impl WalletProvider for KanonWalletProvider {
                     .to_vec()
             }
             KeyType::MLDSA65 => {
-                let sk = crypto::mldsa::ValidatorSecretKey::from_bytes(&secret)
+                let sk = crypto::mldsa::ValidatorSecretKey::from_bytes(secret)
                     .map_err(|e| wallet_err(format!("invalid ML-DSA secret: {e}")))?;
                 crypto::mldsa::sign(data, &sk, b"")
                     .map_err(|e| wallet_err(format!("ML-DSA signing failed: {e}")))?
@@ -307,10 +344,6 @@ impl WalletProvider for KanonWalletProvider {
     }
 
     async fn get_secret_bytes(&self, key_id: &str) -> Result<Vec<u8>> {
-        let (_, nonce, ct, _) = self
-            .fetch_row(key_id)
-            .await?
-            .ok_or_else(|| wallet_err(format!("Key not found: {key_id}")))?;
-        self.open(key_id, &nonce, &ct)
+        Ok(self.material(key_id).await?.1.clone())
     }
 }

@@ -38,7 +38,7 @@ impl KanonStorageProvider {
     /// Connect with an explicit profile id.
     pub async fn connect_with_profile(database_url: &str, profile_id: &str) -> Result<Self> {
         let pool = PgPoolOptions::new()
-            .max_connections(16)
+            .max_connections(super::wallet::pool_size())
             .connect(database_url)
             .await
             .map_err(map_sqlx)?;

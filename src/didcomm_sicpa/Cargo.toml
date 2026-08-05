@@ -1,0 +1,80 @@
+# NOTE: upstream SICPA benches/examples were removed on vendoring — they pulled
+# the lib's `test_vectors` source into the bench/example crate via `#[path]`,
+# which relies on a crate-local `use crate as didcomm` alias that only exists in
+# the lib. Purpose-built profiling benches for the pack/unpack hot path can be
+# added here against the public API instead.
+
+[package]
+# Vendored from Ajna-inc/didcomm-rust (fork of sicpa-dlab/didcomm-rust v0.4.1)
+# into the workspace so we can optimize the DIDComm v2 pack/unpack hot path
+# directly. Renamed from `didcomm` to `sicpa_didcomm` to avoid a name clash with
+# our own `didcomm` wrapper crate and to match the existing import alias.
+name = 'sicpa_didcomm'
+version = '0.4.1'
+authors = ['Vyacheslav Gudkov <vyacheslav.gudkov@dsr-corporation.com>']
+edition = '2018'
+description = 'DIDComm for Rust (Ajna-vendored fork)'
+license = 'Apache-2.0'
+repository = 'https://github.com/Ajna-inc/didcomm-rust'
+readme = 'README.md'
+
+[lints.rust]
+# Vendored third-party code: don't gate CI on its warnings. We optimize hot
+# paths deliberately; wholesale lint-churn of upstream isn't the goal.
+warnings = "allow"
+
+[lints.clippy]
+all = "allow"
+
+[dependencies]
+anyhow = '1.0'
+base64 = '0.13'
+async-trait = '0.1'
+thiserror = '1.0'
+serde_json = '1.0'
+serde-enum-str = '0.1'
+sha2 = '0.9'
+bs58 = "0.4.0"
+varint = "0.9.0"
+lazy_static = { version = "1.4.0", optional = true }
+
+[dependencies.serde]
+version = '1.0'
+features = ['derive']
+
+[dependencies.askar-crypto]
+version = '0.4'
+features = ['std', 'alloc']
+git = 'https://github.com/hyperledger/aries-askar'
+branch = 'main'
+
+[dependencies.uuid]
+version = "0.8"
+features = ["v4", "wasm-bindgen"]
+
+[dependencies.getrandom]
+version = "0.2"
+features = ["js"]
+
+[dev-dependencies]
+lazy_static = '1.4.0'
+
+[dev-dependencies.tokio]
+version = '1.9'
+features = [
+    'rt',
+    'rt-multi-thread',
+    'macros',
+]
+
+[dev-dependencies.getrandom]
+version = '0.2'
+features = ['js']
+
+[dev-dependencies.criterion]
+version = '0.3'
+features = ['async_futures']
+
+[features]
+uniffi = []
+testvectors = ["lazy_static"]

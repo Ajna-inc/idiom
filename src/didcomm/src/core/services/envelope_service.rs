@@ -89,7 +89,10 @@ impl EnvelopeService {
 
         let pack_options = PackEncryptedOptions::default();
 
-        // Pack encrypted
+        // NOTE: pack runs inline on the async worker on purpose. Offloading it to
+        // `spawn_blocking(handle.block_on(...))` (mirroring unpack) was measured to
+        // regress issuance ~4× — with unpack ALSO using that pattern, the nested
+        // `block_on`-on-blocking-threads congests the runtime. Keep pack inline.
         let (packed, _metadata) = didcomm_msg
             .pack_encrypted(
                 to_did,
@@ -736,41 +739,30 @@ impl EnvelopeService {
         // NOTE: We capture a Handle to the current runtime BEFORE entering spawn_blocking,
         // and use handle.block_on() inside. This avoids creating a NEW Runtime per call,
         // which exhausts iOS GCD thread pool and causes abort.
-        tracing::debug!("[unpack_v2] Calling SICPA DidcommMessage::unpack via spawn_blocking");
-        // Clone what we need for the blocking task
-        let packed_clone = packed.to_string();
-        let did_resolver = self.did_resolver.clone();
-        let secrets_resolver = self.secrets_resolver.clone();
-
-        // Capture handle to current runtime — reuse it inside spawn_blocking
-        let handle = tokio::runtime::Handle::current();
-
-        // Run SICPA unpack in a blocking thread pool with timeout
+        tracing::debug!("[unpack_v2] Calling SICPA DidcommMessage::unpack inline");
+        // Await the SICPA unpack inline. Our build uses the `Send` resolver-trait
+        // variant (uniffi feature), and SICPA's per-message work is CPU (ECDH /
+        // AEAD) over async, cached resolvers — there is no synchronous blocking
+        // I/O — so the old `spawn_blocking(handle.block_on(..))` isolation just
+        // adds a runtime ping-pong. A concurrent micro-bench (see
+        // `sicpa_didcomm` tests/hot_path.rs) measured inline ~10% faster
+        // (20.8k vs 18.7k round-trips/s at 64-way on 12 cores).
+        let unpack_options = UnpackOptions::default();
         let unpack_result = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            tokio::task::spawn_blocking(move || {
-                let unpack_options = UnpackOptions::default();
-                handle.block_on(async {
-                    DidcommMessage::unpack(
-                        &packed_clone,
-                        did_resolver.as_ref(),
-                        secrets_resolver.as_ref(),
-                        &unpack_options,
-                    )
-                    .await
-                    .map_err(|e| DidcommError::UnpackingFailed(e.to_string()))
-                })
-            }),
+            DidcommMessage::unpack(
+                packed,
+                self.did_resolver.as_ref(),
+                self.secrets_resolver.as_ref(),
+                &unpack_options,
+            ),
         )
         .await
         .map_err(|_| {
             tracing::error!("[SICPA] Unpack timeout after 30s");
             DidcommError::UnpackingFailed("SICPA unpack timeout after 30s".to_string())
         })?
-        .map_err(|e| {
-            tracing::error!("[SICPA] spawn_blocking join error: {:?}", e);
-            DidcommError::UnpackingFailed(format!("spawn_blocking failed: {}", e))
-        })??;
+        .map_err(|e| DidcommError::UnpackingFailed(e.to_string()))?;
 
         let (didcomm_msg, unpack_metadata) = unpack_result;
 

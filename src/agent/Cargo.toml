@@ -60,7 +60,7 @@ dashmap = { workspace = true }
 tracing = "0.1"
 url = "2.5"
 multibase = "0.9"
-sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+sicpa_didcomm = { path = "../didcomm_sicpa", features = ["uniffi"] }
 bs58 = "0.5"
 aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main" }
 reqwest = "0.12"  # For HTTP client in async message sending

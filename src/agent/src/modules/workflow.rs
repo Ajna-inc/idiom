@@ -563,7 +563,7 @@ impl agent_module::AgentModule for WorkflowModule {
             let sender = sender.clone();
             Box::pin(async move {
                 // Correlate the DIDComm thread by the workflow instance_id
-                // (Aries/ACA-Py convention): peers 
+                // (Aries/ACA-Py convention): peers
                 // StartHandler — match `~thread.thid == body.instance_id`. Every
                 // workflow message body carries instance_id; without an explicit
                 // `~thread`, the peer falls back to our random `@id` and logs a

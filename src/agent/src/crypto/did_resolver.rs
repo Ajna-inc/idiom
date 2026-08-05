@@ -23,12 +23,22 @@ use std::sync::Arc;
 /// initializing the resolver).
 pub struct AgentDIDResolver {
     registry: Arc<DidRegistry>,
+    /// Resolved-DIDDoc cache. `resolve()` is called several times per DIDComm
+    /// pack/unpack (recipient + sender key material) and otherwise rebuilds the
+    /// whole doc — multibase decodes + ~20 allocations — every time. did:peer /
+    /// did:key resolution is deterministic (the DID encodes the doc), so caching
+    /// is safe; registry DIDs are effectively immutable over a session. This is
+    /// the dominant per-message plumbing cost, not the crypto.
+    cache: dashmap::DashMap<String, DIDDoc>,
 }
 
 impl AgentDIDResolver {
     /// Create a new AgentDIDResolver
     pub fn new(registry: Arc<DidRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            cache: dashmap::DashMap::new(),
+        }
     }
 
     /// Resolve did:peer:2 locally (self-resolving, no registry needed)
@@ -376,11 +386,19 @@ impl DIDResolver for AgentDIDResolver {
         // The resolver should resolve the base DID; the DIDComm library handles fragment dereferencing.
         let base_did = did.split('#').next().unwrap_or(did);
 
+        // Fast path: memoized resolution (deterministic for did:peer/did:key,
+        // immutable-over-session for registry DIDs). Avoids rebuilding the doc on
+        // every pack/unpack.
+        if let Some(doc) = self.cache.get(base_did) {
+            return Ok(Some(doc.clone()));
+        }
+
         tracing::debug!("[DIDResolver] Resolving: {}", base_did);
 
         // Check if this is did:peer:2 (self-resolving)
         if base_did.starts_with("did:peer:2.") {
             let didcomm_doc = self.resolve_peer_2(base_did)?;
+            self.cache.insert(base_did.to_string(), didcomm_doc.clone());
             return Ok(Some(didcomm_doc));
         }
 
@@ -404,6 +422,7 @@ impl DIDResolver for AgentDIDResolver {
                     didcomm_doc.service.len()
                 );
 
+                self.cache.insert(base_did.to_string(), didcomm_doc.clone());
                 Ok(Some(didcomm_doc))
             }
             Err(local_error) => {

@@ -22,10 +22,16 @@ pub struct AnonCredsIssuerService {
     registry: Arc<dyn AnonCredsRegistry>,
     /// Optional persistent store
     store: Option<Arc<dyn AnonCredsStore>>,
-    /// Credential definition private keys — None = not loaded from store yet
-    cred_def_privates: RwLock<Option<HashMap<String, CredentialDefinitionPrivate>>>,
+    /// Credential definition private keys — None = not loaded from store yet.
+    /// Held in `Arc` so the hot issuance path can cheaply clone a handle out
+    /// (refcount bump) and move it into `spawn_blocking` for CL signing.
+    cred_def_privates: RwLock<Option<HashMap<String, Arc<CredentialDefinitionPrivate>>>>,
     /// Key correctness proofs — None = not loaded from store yet
     key_correctness_proofs: RwLock<Option<HashMap<String, CredentialKeyCorrectnessProof>>>,
+    /// In-memory cache of resolved (public) credential definitions, keyed by
+    /// cred-def id. Avoids a registry round-trip (Kanon on-chain / askar DB)
+    /// on every `create_credential`; the cred-def is immutable once published.
+    cred_def_cache: RwLock<HashMap<String, Arc<CredentialDefinition>>>,
 }
 
 impl AnonCredsIssuerService {
@@ -36,6 +42,7 @@ impl AnonCredsIssuerService {
             store: None,
             cred_def_privates: RwLock::new(Some(HashMap::new())),
             key_correctness_proofs: RwLock::new(Some(HashMap::new())),
+            cred_def_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -49,6 +56,7 @@ impl AnonCredsIssuerService {
             store: Some(store),
             cred_def_privates: RwLock::new(None), // lazy-load from store
             key_correctness_proofs: RwLock::new(None),
+            cred_def_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -70,7 +78,7 @@ impl AnonCredsIssuerService {
             for (id, bytes) in entries {
                 match serde_json::from_slice::<CredentialDefinitionPrivate>(&bytes) {
                     Ok(private) => {
-                        map.insert(id, private);
+                        map.insert(id, Arc::new(private));
                     }
                     Err(e) => tracing::warn!("Skip corrupt cred def private {}: {}", id, e),
                 }
@@ -245,7 +253,7 @@ impl AnonCredsIssuerService {
             privates
                 .as_mut()
                 .unwrap()
-                .insert(registration.cred_def_id.clone(), cred_def_private);
+                .insert(registration.cred_def_id.clone(), Arc::new(cred_def_private));
         }
         {
             let mut proofs = self
@@ -423,7 +431,7 @@ impl AnonCredsIssuerService {
         cred_rev_index: u32,
     ) -> Result<(Credential, RevocationStatusList)> {
         self.ensure_privates_loaded().await?;
-        let cred_def = self.registry.get_credential_definition(cred_def_id).await?;
+        let cred_def = self.cred_def_cached(cred_def_id).await?;
 
         // Fetch the accumulator snapshot before taking the private-keys lock so
         // the (non-async-aware) guard is never held across an await point. With
@@ -441,38 +449,92 @@ impl AnonCredsIssuerService {
                 .map_err(|e| AnonCredsError::Credential(format!("attr {}: {}", name, e)))?;
         }
 
-        let revocation_config = CredentialRevocationConfig {
-            reg_def: rev_reg_def,
-            reg_def_private: rev_reg_priv,
-            registry_idx: cred_rev_index,
-            status_list: &current_status_list,
-        };
+        let cred_def_private = self.cred_def_private_handle(cred_def_id)?;
 
-        // Held only across synchronous work — no await below this point.
-        let privates = self
-            .cred_def_privates
-            .read()
-            .map_err(|e| AnonCredsError::Storage(format!("Lock poisoned: {}", e)))?;
-        let cred_def_private = privates.as_ref().unwrap().get(cred_def_id).ok_or_else(|| {
-            AnonCredsError::NotFound(format!(
-                "Credential definition private key not found: {}",
-                cred_def_id
-            ))
-        })?;
+        // Owned copies to move the CL sign onto a blocking thread.
+        let cred_offer = serde_clone(cred_offer)?;
+        let cred_request = serde_clone(cred_request)?;
+        let reg_def = serde_clone(rev_reg_def)?;
+        let reg_def_private = serde_clone(rev_reg_priv)?;
 
-        let credential = anoncreds::issuer::create_credential(
-            &cred_def,
-            cred_def_private,
-            cred_offer,
-            cred_request,
-            cred_values.into(),
-            Some(revocation_config),
-        )?;
+        let (credential, current_status_list) = tokio::task::spawn_blocking(move || {
+            // Scope `revocation_config` so its borrow of `current_status_list`
+            // ends before we move the status list into the returned tuple.
+            let cred = {
+                let revocation_config = CredentialRevocationConfig {
+                    reg_def: &reg_def,
+                    reg_def_private: &reg_def_private,
+                    registry_idx: cred_rev_index,
+                    status_list: &current_status_list,
+                };
+                anoncreds::issuer::create_credential(
+                    &cred_def,
+                    &cred_def_private,
+                    &cred_offer,
+                    &cred_request,
+                    cred_values.into(),
+                    Some(revocation_config),
+                )
+            };
+            cred.map(|c| (c, current_status_list))
+        })
+        .await
+        .map_err(|e| AnonCredsError::Credential(format!("signing task panicked: {}", e)))??;
 
         Ok((credential, current_status_list))
     }
 
-    /// Issue a credential to a holder
+    /// Resolve a (public) credential definition, caching it in memory so
+    /// repeated issuance doesn't hit the registry (chain/DB) on every call.
+    /// A published cred-def is immutable, so the cache never goes stale.
+    async fn cred_def_cached(&self, cred_def_id: &str) -> Result<Arc<CredentialDefinition>> {
+        if let Some(cd) = self
+            .cred_def_cache
+            .read()
+            .map_err(|e| AnonCredsError::Storage(format!("Lock poisoned: {}", e)))?
+            .get(cred_def_id)
+            .cloned()
+        {
+            return Ok(cd);
+        }
+        let cd = Arc::new(self.registry.get_credential_definition(cred_def_id).await?);
+        self.cred_def_cache
+            .write()
+            .map_err(|e| AnonCredsError::Storage(format!("Lock poisoned: {}", e)))?
+            .insert(cred_def_id.to_string(), cd.clone());
+        Ok(cd)
+    }
+
+    /// Clone a private-key handle out of the cache (an `Arc` refcount bump),
+    /// releasing the lock before the caller does any blocking CL signing.
+    fn cred_def_private_handle(
+        &self,
+        cred_def_id: &str,
+    ) -> Result<Arc<CredentialDefinitionPrivate>> {
+        let privates = self
+            .cred_def_privates
+            .read()
+            .map_err(|e| AnonCredsError::Storage(format!("Lock poisoned: {}", e)))?;
+        privates
+            .as_ref()
+            .unwrap()
+            .get(cred_def_id)
+            .cloned()
+            .ok_or_else(|| {
+                AnonCredsError::NotFound(format!(
+                    "Credential definition private key not found: {}",
+                    cred_def_id
+                ))
+            })
+    }
+
+    /// Issue a credential to a holder.
+    ///
+    /// The CL signature (`anoncreds::issuer::create_credential`) is a
+    /// synchronous, CPU-heavy big-integer operation. Running it inline would
+    /// block a tokio worker for the whole sign and starve unrelated I/O, so it
+    /// is offloaded to `spawn_blocking`; the async workers stay free to serve
+    /// other requests while signing proceeds on the blocking pool.
     pub async fn create_credential(
         &self,
         cred_def_id: &str,
@@ -480,41 +542,93 @@ impl AnonCredsIssuerService {
         cred_request: &CredentialRequest,
         attributes: HashMap<String, String>,
     ) -> Result<Credential> {
+        let _t = wprof::start();
         self.ensure_privates_loaded().await?;
 
-        let cred_def = self.registry.get_credential_definition(cred_def_id).await?;
+        let cred_def = self.cred_def_cached(cred_def_id).await?;
+        let cred_def_private = self.cred_def_private_handle(cred_def_id)?;
+        wprof::add(&wprof::SETUP, _t);
 
-        let privates = self
-            .cred_def_privates
-            .read()
-            .map_err(|e| AnonCredsError::Storage(format!("Lock poisoned: {}", e)))?;
+        // Owned copies so the sign can move onto a blocking thread. These
+        // anoncreds types don't impl Clone; a serde round-trip is microseconds
+        // versus the millisecond-scale CL signature, so it's negligible.
+        let _t = wprof::start();
+        let cred_offer = serde_clone(cred_offer)?;
+        let cred_request = serde_clone(cred_request)?;
 
-        let cred_def_private = privates.as_ref().unwrap().get(cred_def_id).ok_or_else(|| {
-            AnonCredsError::NotFound(format!(
-                "Credential definition private key not found: {}",
-                cred_def_id
-            ))
-        })?;
-
-        // Build credential values
         let mut cred_values = MakeCredentialValues::default();
         for (name, value) in &attributes {
             cred_values.add_raw(name, value).map_err(|e| {
                 AnonCredsError::Credential(format!("Failed to add attribute {}: {}", name, e))
             })?;
         }
+        wprof::add(&wprof::SERDE, _t);
 
-        let credential = anoncreds::issuer::create_credential(
-            &cred_def,
-            cred_def_private,
-            cred_offer,
-            cred_request,
-            cred_values.into(),
-            None, // No revocation
-        )?;
+        let _t = wprof::start();
+        let credential = tokio::task::spawn_blocking(move || {
+            anoncreds::issuer::create_credential(
+                &cred_def,
+                &cred_def_private,
+                &cred_offer,
+                &cred_request,
+                cred_values.into(),
+                None, // No revocation
+            )
+        })
+        .await
+        .map_err(|e| AnonCredsError::Credential(format!("signing task panicked: {}", e)))??;
+        wprof::add(&wprof::SIGN, _t);
+        wprof::tick();
 
         Ok(credential)
     }
+}
+
+/// Opt-in wrapper profiler (`ANONCREDS_PROFILE=1`): breaks down create_credential
+/// time outside the CL crypto. Zero cost when disabled.
+mod wprof {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    pub static SETUP: AtomicU64 = AtomicU64::new(0);
+    pub static SERDE: AtomicU64 = AtomicU64::new(0);
+    pub static SIGN: AtomicU64 = AtomicU64::new(0);
+    pub static CNT: AtomicU64 = AtomicU64::new(0);
+    fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("ANONCREDS_PROFILE").is_ok())
+    }
+    pub fn start() -> Option<Instant> {
+        on().then(Instant::now)
+    }
+    pub fn add(a: &AtomicU64, t: Option<Instant>) {
+        if let Some(t) = t {
+            a.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
+    pub fn tick() {
+        if !on() {
+            return;
+        }
+        let c = CNT.fetch_add(1, Ordering::Relaxed) + 1;
+        if c.is_multiple_of(500) {
+            let us = |a: &AtomicU64| a.load(Ordering::Relaxed) as f64 / c as f64 / 1000.0;
+            eprintln!(
+                "\n── create_credential WRAPPER (avg µs/cred over {c}) ──\n  setup+caches   {:>7.1} µs\n  serde_clone    {:>7.1} µs\n  sign(anoncreds+corr-proof+spawn_blocking)  {:>7.1} µs\n",
+                us(&SETUP), us(&SERDE), us(&SIGN)
+            );
+        }
+    }
+}
+
+/// Clone a value that doesn't impl `Clone` via a serde round-trip. Used on the
+/// issuance hot path for small anoncreds types (offer/request/rev-reg) that
+/// must be owned to move into `spawn_blocking`.
+fn serde_clone<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> Result<T> {
+    let bytes = serde_json::to_vec(v)
+        .map_err(|e| AnonCredsError::Credential(format!("serde_clone serialize: {}", e)))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| AnonCredsError::Credential(format!("serde_clone deserialize: {}", e)))
 }
 
 #[cfg(test)]

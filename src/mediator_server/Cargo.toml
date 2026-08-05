@@ -52,7 +52,7 @@ multibase = { workspace = true }
 
 # Crypto — SICPA didcomm renamed to avoid clash with the `didcomm` umbrella crate.
 # (Ed25519↔X25519 conversion is delegated to `did::methods`.)
-sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+sicpa_didcomm = { path = "../didcomm_sicpa", features = ["uniffi"] }
 
 # Push notifications: HTTP client for FCM v1 + service-account JWT signing
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }

@@ -15,6 +15,11 @@ use tracing::{debug, trace, warn};
 pub struct AgentSecretsResolver {
     wallet: Arc<dyn WalletProvider>,
     did_registry: Arc<DidRegistry>,
+    /// Memoized `did#fragment → (public_key_id, key_type)`. `find_wallet_key_id`
+    /// otherwise re-resolves the DID doc and re-scans its verification methods on
+    /// every `get_secret` (called per pack/unpack). Deterministic for
+    /// did:peer/did:key; the actual secret bytes are cached in the wallet.
+    key_id_cache: dashmap::DashMap<String, (String, String)>,
 }
 
 impl AgentSecretsResolver {
@@ -23,6 +28,7 @@ impl AgentSecretsResolver {
         Self {
             wallet,
             did_registry,
+            key_id_cache: dashmap::DashMap::new(),
         }
     }
 
@@ -51,11 +57,20 @@ impl AgentSecretsResolver {
     ) -> Result<Option<(String, String)>> {
         trace!("Looking up key for {}#{}", did, fragment);
 
+        let cache_key = format!("{did}#{fragment}");
+        if let Some(hit) = self.key_id_cache.get(&cache_key) {
+            return Ok(Some(hit.clone()));
+        }
+
         // Special handling for did:peer:2 (self-resolving from DID string)
         // This avoids going through the registry which may not have the peer resolver working
         if did.starts_with("did:peer:2.") {
             trace!("Resolving did:peer:2 directly (self-resolving)");
-            return self.resolve_peer_2_key(did, fragment);
+            let resolved = self.resolve_peer_2_key(did, fragment)?;
+            if let Some(ref v) = resolved {
+                self.key_id_cache.insert(cache_key, v.clone());
+            }
+            return Ok(resolved);
         }
 
         // Parse DID
@@ -83,12 +98,16 @@ impl AgentSecretsResolver {
             // Try to extract wallet key ID from multibase public key
             if let Some(multibase_key) = &vm.public_key_multibase {
                 trace!("Public key (multibase): {}", multibase_key);
-                return Ok(Some((multibase_key.clone(), vm.type_.clone())));
+                let v = (multibase_key.clone(), vm.type_.clone());
+                self.key_id_cache.insert(cache_key, v.clone());
+                return Ok(Some(v));
             }
 
             if let Some(base58_key) = &vm.public_key_base58 {
                 trace!("Public key (base58): {}", base58_key);
-                return Ok(Some((base58_key.clone(), vm.type_.clone())));
+                let v = (base58_key.clone(), vm.type_.clone());
+                self.key_id_cache.insert(cache_key, v.clone());
+                return Ok(Some(v));
             }
         }
 
