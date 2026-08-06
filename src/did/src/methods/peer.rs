@@ -245,6 +245,91 @@ fn read_uvarint(data: &[u8]) -> Option<(u64, &[u8])> {
     None
 }
 
+/// Self-resolve a long-form did:peer:4 into its primary DIDComm service —
+/// endpoint, routing keys, and base58 recipient/key-agreement keys — the
+/// numalgo-4 counterpart of [`parse_peer2`]. A numalgo-4 DID is self-resolving
+/// (the document is embedded) and, like did:peer:2, is stored only as a
+/// reference with no document, so the message sender decodes it here rather than
+/// via the DID repository. Returns `None` for the short form or a malformed DID.
+///
+/// numalgo-4 documents embed their verification methods directly inside the
+/// relationship arrays, so keys are looked up there (there is no top-level
+/// `verificationMethod`). The recipient key is `service.recipientKeys[0]`
+/// dereferenced to its Ed25519 base58 verkey (the DIDComm-v1 `kid` / mediator
+/// keylist entry).
+pub fn parse_peer4(did: &str) -> Option<Peer2Service> {
+    let encoded = split_peer4_long(did)?;
+    let (_base, data) = multibase::decode(encoded).ok()?;
+    let (codec, rest) = read_uvarint(&data)?;
+    if codec != 0x0200 {
+        return None;
+    }
+    let doc: serde_json::Value = serde_json::from_slice(rest).ok()?;
+
+    let service = doc.get("service").and_then(|s| s.as_array())?.first()?;
+    let service_endpoint = service
+        .get("serviceEndpoint")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let service_type = service.get("type").and_then(|v| v.as_str()).map(String::from);
+    let routing_keys: Vec<String> = service
+        .get("routingKeys")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|k| k.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // base58 verkey for a "#id" reference, found in an embedded relationship array.
+    let key_by_ref = |id_ref: &str| -> Option<String> {
+        for field in ["authentication", "keyAgreement", "verificationMethod"] {
+            if let Some(arr) = doc.get(field).and_then(|v| v.as_array()) {
+                if let Some(m) = arr.iter().find(|m| {
+                    m.get("id")
+                        .and_then(|i| i.as_str())
+                        .map(|i| i.ends_with(id_ref))
+                        .unwrap_or(false)
+                }) {
+                    return m
+                        .get("publicKeyBase58")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                }
+            }
+        }
+        None
+    };
+    let first_base58 = |field: &str| -> Option<String> {
+        doc.get(field)
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|m| m.get("publicKeyBase58").and_then(|v| v.as_str()).map(String::from))
+    };
+
+    let authentication_key = match service
+        .get("recipientKeys")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|k| k.as_str())
+    {
+        Some(r) if r.starts_with('#') => key_by_ref(r),
+        Some(r) => Some(r.to_string()),
+        None => first_base58("authentication"),
+    };
+    let key_agreement_key = first_base58("keyAgreement");
+    let recipient_keys = [authentication_key.clone(), key_agreement_key.clone()]
+        .into_iter()
+        .flatten()
+        .collect();
+
+    Some(Peer2Service {
+        service_endpoint,
+        service_type,
+        routing_keys,
+        authentication_key,
+        key_agreement_key,
+        recipient_keys,
+    })
+}
+
 /// did:peer Creator - Creates new did:peer DIDs (numalgo 2)
 ///
 /// Creates did:peer:2 DIDs with embedded keys and service endpoint.

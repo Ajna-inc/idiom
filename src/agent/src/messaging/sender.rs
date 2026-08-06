@@ -173,6 +173,8 @@ impl DidCommSender {
             (endpoint, routing_keys, recipient_key)
         } else if let Some(resolved) = resolve_did_peer2_service(recipient_did) {
             resolved
+        } else if let Some(resolved) = resolve_did_peer4_service(recipient_did) {
+            resolved
         } else {
             return Err(AgentError::DidResolution(format!(
                 "Cannot resolve DID: {}",
@@ -338,6 +340,8 @@ impl DidCommSender {
             (endpoint, routing_keys)
         } else if let Some((endpoint, routing_keys, _)) = resolve_did_peer2_service(recipient_did) {
             (endpoint, routing_keys)
+        } else if let Some((endpoint, routing_keys, _)) = resolve_did_peer4_service(recipient_did) {
+            (endpoint, routing_keys)
         } else {
             return Err(AgentError::DidResolution(format!(
                 "Cannot resolve DID: {recipient_did}"
@@ -399,6 +403,17 @@ fn ensure_base58_verkey(key: &str) -> Result<String> {
 /// auth key (base58), used as the v1 `kid` / mediator keylist entry.
 fn resolve_did_peer2_service(did: &str) -> Option<(String, Vec<String>, Option<String>)> {
     let p = did::methods::peer::parse_peer2(did)?;
+    let endpoint = p.service_endpoint?;
+    Some((endpoint, p.routing_keys, p.authentication_key))
+}
+
+/// Self-resolve a long-form did:peer:4 to `(endpoint, routing_keys,
+/// recipient_key_base58)`. numalgo-4 DIDs (e.g. mediated mobile/Bifold wallets)
+/// are self-resolving and stored only as a reference with no document, so —
+/// exactly like [`resolve_did_peer2_service`] — decode the embedded document via
+/// the canonical [`did::methods::peer::parse_peer4`] rather than the repository.
+fn resolve_did_peer4_service(did: &str) -> Option<(String, Vec<String>, Option<String>)> {
+    let p = did::methods::peer::parse_peer4(did)?;
     let endpoint = p.service_endpoint?;
     Some((endpoint, p.routing_keys, p.authentication_key))
 }
