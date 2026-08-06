@@ -471,17 +471,20 @@ impl MessageProcessor {
             }
         }
 
-        // Path 0a: the recipient's did:peer:2 advertises a v1 `did-communication`
-        // service. Aries agents (credo) use a self-resolving did:peer:2 with NO
-        // did_doc~attach but a v1 service — so the DID method is peer:2 yet the
-        // channel is DIDComm v1 (RFC19). Packing v2 there sets the JWE `kid` to
-        // the did:peer:2 DID URL, which the mediator can't match against its
-        // base58 keylist ("no mediation for recipient keys") — the `complete`
-        // is dropped and the peer stays at ResponseSent. Pack v1 so the `kid` is
-        // the base58 verkey the peer registered; `pack_with_v1` resolves the
-        // recipient key straight from the DID.
-        if did_peer2_is_v1_did_communication(&recipient_did) {
-            trace!("Packing with v1 (did:peer:2 carrying a did-communication service)");
+        // Path 0a: the recipient's self-describing peer DID (numalgo 2 OR 4)
+        // advertises a v1 `did-communication` service. Aries agents (credo,
+        // including mediated mobile wallets on a did:peer:4) use a self-resolving
+        // peer DID with a v1 service — so the DID method is peer:2/4 yet the
+        // channel is DIDComm v1 (RFC19), and the peer is v1-ONLY. Packing v2
+        // (ECDH-1PU) there is undecryptable by the wallet ("Unsupported pack
+        // algorithm") and, for peer:2, also sets the JWE `kid` to a DID URL the
+        // mediator can't match against its base58 keylist. Pack v1 so the `kid`
+        // is the base58 verkey the peer registered; `pack_with_v1` resolves the
+        // recipient key straight from the DID. This is the authoritative signal
+        // and runs before the version-aware EnvelopeService paths, so it covers
+        // every protocol reply — not just the one being debugged.
+        if recipient_advertises_v1_service(&recipient_did) {
+            trace!("Packing with v1 (peer DID carrying a did-communication/IndyAgent service)");
             return self
                 .pack_with_v1(
                     message_to_v1_wire(&outbound.message),
@@ -851,9 +854,21 @@ pub async fn anon_pack_message_v1(
 /// `did_doc~attach` yet a v1 `did-communication` service — so the DID *method*
 /// is peer:2 while the DIDComm *version* is v1. Messages to such a peer must be
 /// packed v1 (base58 `kid`) so a v1 mediator can route them by its keylist.
-fn did_peer2_is_v1_did_communication(did: &str) -> bool {
+/// True when the recipient's self-describing peer DID advertises a DIDComm
+/// **v1** service (`did-communication` / `IndyAgent`). Checks BOTH numalgo-2
+/// and numalgo-4, since Aries/credo wallets — including mediated mobile
+/// wallets, which use a did:peer:4 — advertise exactly this service type and
+/// are v1-only. Packing such a peer a v2 (ECDH-1PU) envelope yields
+/// "Unsupported pack algorithm" on their side and the message is silently
+/// dropped. This is the authoritative per-recipient version signal and is
+/// checked before any of the version-aware EnvelopeService paths, so it
+/// applies uniformly to every protocol reply (connections, discover-features,
+/// workflow, credentials, proofs, basic-messages, …). Previously only peer:2
+/// was covered, so did:peer:4 wallets fell through to the v2 packing path.
+fn recipient_advertises_v1_service(did: &str) -> bool {
     matches!(
         did::methods::peer::parse_peer2(did)
+            .or_else(|| did::methods::peer::parse_peer4(did))
             .and_then(|p| p.service_type)
             .as_deref(),
         Some("did-communication") | Some("IndyAgent")

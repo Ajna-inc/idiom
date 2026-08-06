@@ -1203,6 +1203,13 @@ impl MessageHandler for DidExchangeRequestHandler {
 
             // Update the connection to use our connection-specific did:peer:1 (not agent's did:key)
             updated_connection.did = peer_did.clone();
+            // This branch is the DIDComm v1 path (requester did NOT send a
+            // self-resolving did:peer:2). Label the connection v1 explicitly —
+            // mirrors the `Some("2")` set on the v2 branch — so `is_v2()` and
+            // every version-aware pack path reflect the negotiated version
+            // rather than leaving it unset. Peers that reach here (did:peer:1,
+            // did_doc~attach, or a mediated did:peer:4 wallet) are v1-only.
+            updated_connection.didcomm_version = Some("1".to_string());
 
             // Also override the DID in the response message
             response_msg.did = peer_did.clone();
