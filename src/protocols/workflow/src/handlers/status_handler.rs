@@ -22,13 +22,31 @@ impl StatusHandler {
 #[async_trait]
 impl MessageHandler for StatusHandler {
     fn supported_types(&self) -> Vec<String> {
-        vec![StatusRequestMessage::TYPE.to_string()]
+        vec![
+            StatusRequestMessage::TYPE.to_string(),
+            StatusMessage::TYPE.to_string(),
+        ]
     }
 
     async fn handle(
         &self,
         inbound: InboundMessage,
     ) -> std::result::Result<Option<OutboundMessage>, MessageHandlerError> {
+        if inbound
+            .message
+            .body
+            .get("state")
+            .and_then(|s| s.as_str())
+            .is_some()
+        {
+            tracing::debug!(
+                target: "workflow",
+                instance_id = ?inbound.message.body.get("instance_id"),
+                "workflow status response received; acknowledged"
+            );
+            return Ok(None);
+        }
+
         let status_req: StatusRequestMessage = serde_json::from_value(inbound.message.body.clone())
             .map_err(|e| MessageHandlerError::InvalidMessage(e.to_string()))?;
 
