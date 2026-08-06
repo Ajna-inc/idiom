@@ -187,19 +187,19 @@ fn decode_peer4_long(did: &str, encoded: &str) -> ResolutionResult<DidDocument> 
 
     let mut doc: serde_json::Value = serde_json::from_slice(rest)
         .map_err(|e| ResolutionError::ResolutionFailed(format!("did:peer:4 document JSON: {e}")))?;
+    const RELATIONSHIPS: [&str; 5] = [
+        "authentication",
+        "keyAgreement",
+        "assertionMethod",
+        "capabilityDelegation",
+        "capabilityInvocation",
+    ];
     if let Some(obj) = doc.as_object_mut() {
         obj.insert("id".into(), serde_json::Value::String(did.to_string()));
         obj.insert("alsoKnownAs".into(), serde_json::json!([short]));
         // The encoding drops each verification method's controller; the spec
         // says the resolved controller is the DID itself.
-        for field in [
-            "verificationMethod",
-            "authentication",
-            "assertionMethod",
-            "keyAgreement",
-            "capabilityDelegation",
-            "capabilityInvocation",
-        ] {
+        for field in std::iter::once("verificationMethod").chain(RELATIONSHIPS) {
             if let Some(arr) = obj.get_mut(field).and_then(|v| v.as_array_mut()) {
                 for item in arr.iter_mut() {
                     if let Some(m) = item.as_object_mut() {
@@ -208,6 +208,32 @@ fn decode_peer4_long(did: &str, encoded: &str) -> ResolutionResult<DidDocument> 
                     }
                 }
             }
+        }
+        
+        let mut vms: Vec<serde_json::Value> = obj
+            .get("verificationMethod")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut ids: std::collections::HashSet<String> = vms
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
+            .collect();
+        for field in RELATIONSHIPS {
+            let Some(arr) = obj.get(field).and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for item in arr {
+                let Some(id) = item.get("id").and_then(|i| i.as_str()) else {
+                    continue;
+                };
+                if ids.insert(id.to_string()) {
+                    vms.push(item.clone());
+                }
+            }
+        }
+        if !vms.is_empty() {
+            obj.insert("verificationMethod".into(), serde_json::Value::Array(vms));
         }
     }
 
@@ -732,6 +758,49 @@ mod tests {
         );
         let enc = split_peer4_long(&tampered).expect("still long form");
         assert!(decode_peer4_long(&tampered, enc).is_err());
+    }
+
+    #[test]
+    fn numalgo4_hoists_embedded_methods_and_resolves_service() {
+        let did = make_peer4(&serde_json::json!({
+            "@context": ["https://www.w3.org/ns/did/v1"],
+            "authentication": [{
+                "id": "#key-1",
+                "type": "Ed25519VerificationKey2018",
+                "publicKeyBase58": "5gRaA7BNR9rRQUojFXcMQBSVHRzCr7XVMp6hwJq3UHRn"
+            }],
+            "keyAgreement": [{
+                "id": "#key-2",
+                "type": "X25519KeyAgreementKey2019",
+                "publicKeyBase58": "3ne1rF6FHNZ9wstAYkEHX59AegL31L7NeG5NJrStS64p"
+            }],
+            "service": [{
+                "id": "#inline-0",
+                "type": "did-communication",
+                "serviceEndpoint": "https://mediator.example:3002",
+                "recipientKeys": ["#key-1"],
+                "routingKeys": ["did:key:z6MkiAGAFumGbXRwNPA4paPEnCvBUS8C4yG65Kb1ig8GYX9S"]
+            }]
+        }));
+
+        let encoded = split_peer4_long(&did).unwrap();
+        let doc = decode_peer4_long(&did, encoded).unwrap();
+        // Both embedded methods are hoisted into verificationMethod (canonical).
+        assert_eq!(doc.verification_method.len(), 2);
+        assert!(doc.verification_method.iter().any(|vm| {
+            vm.id.ends_with("#key-2")
+                && vm.public_key_base58.as_deref()
+                    == Some("3ne1rF6FHNZ9wstAYkEHX59AegL31L7NeG5NJrStS64p")
+        }));
+
+        // parse_peer4 resolves the mediated service + dereferenced recipient key.
+        let svc = parse_peer4(&did).unwrap();
+        assert_eq!(svc.service_endpoint.as_deref(), Some("https://mediator.example:3002"));
+        assert_eq!(svc.routing_keys.len(), 1);
+        assert_eq!(
+            svc.authentication_key.as_deref(),
+            Some("5gRaA7BNR9rRQUojFXcMQBSVHRzCr7XVMp6hwJq3UHRn")
+        );
     }
 
     #[tokio::test]
