@@ -204,14 +204,34 @@ impl AgentDIDResolver {
 
     /// Convert our DidDocument to didcomm's DIDDoc format
     fn convert_to_didcomm_doc(&self, our_doc: DidDocument) -> Result<DIDDoc> {
-        // Convert verification methods
-        let verification_method = our_doc
+        // Convert verification methods, starting from the top-level array.
+        let mut verification_method = our_doc
             .verification_method
             .iter()
             .map(|vm| self.convert_verification_method(vm))
             .collect::<Result<Vec<_>>>()?;
 
-        // Extract key agreement references
+        // Some DID documents (did:peer:4, did:key, …) embed verification methods
+        // directly inside the relationship arrays and carry no top-level
+        // `verificationMethod`. Hoist any embedded method into
+        // `verification_method` (deduped by id) so the references collected below
+        // actually resolve — otherwise packing fails with "no verification
+        // method found".
+        let mut seen: std::collections::HashSet<String> =
+            verification_method.iter().map(|vm| vm.id.clone()).collect();
+        for rel in our_doc
+            .authentication
+            .iter()
+            .chain(our_doc.key_agreement.iter())
+        {
+            if let VerificationRelationship::Embedded(vm) = rel {
+                if seen.insert(vm.id.clone()) {
+                    verification_method.push(self.convert_verification_method(vm)?);
+                }
+            }
+        }
+
+        // Extract key agreement references (embedded methods were hoisted above).
         let key_agreement = our_doc
             .key_agreement
             .iter()
