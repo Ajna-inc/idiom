@@ -185,9 +185,8 @@ fn decode_peer4_long(did: &str, encoded: &str) -> ResolutionResult<DidDocument> 
         )));
     }
 
-    let mut doc: serde_json::Value = serde_json::from_slice(rest).map_err(|e| {
-        ResolutionError::ResolutionFailed(format!("did:peer:4 document JSON: {e}"))
-    })?;
+    let mut doc: serde_json::Value = serde_json::from_slice(rest)
+        .map_err(|e| ResolutionError::ResolutionFailed(format!("did:peer:4 document JSON: {e}")))?;
     if let Some(obj) = doc.as_object_mut() {
         obj.insert("id".into(), serde_json::Value::String(did.to_string()));
         obj.insert("alsoKnownAs".into(), serde_json::json!([short]));
@@ -271,11 +270,18 @@ pub fn parse_peer4(did: &str) -> Option<Peer2Service> {
         .get("serviceEndpoint")
         .and_then(|v| v.as_str())
         .map(String::from);
-    let service_type = service.get("type").and_then(|v| v.as_str()).map(String::from);
+    let service_type = service
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let routing_keys: Vec<String> = service
         .get("routingKeys")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|k| k.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     // base58 verkey for a "#id" reference, found in an embedded relationship array.
@@ -301,7 +307,11 @@ pub fn parse_peer4(did: &str) -> Option<Peer2Service> {
         doc.get(field)
             .and_then(|v| v.as_array())
             .and_then(|a| a.first())
-            .and_then(|m| m.get("publicKeyBase58").and_then(|v| v.as_str()).map(String::from))
+            .and_then(|m| {
+                m.get("publicKeyBase58")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
     };
 
     let authentication_key = match service
@@ -715,7 +725,11 @@ mod tests {
         // Corrupt the embedded document → self-certifying hash check must fail.
         let did = sample_peer4();
         let last = did.chars().next_back().unwrap();
-        let tampered = format!("{}{}", &did[..did.len() - 1], if last == 'A' { 'B' } else { 'A' });
+        let tampered = format!(
+            "{}{}",
+            &did[..did.len() - 1],
+            if last == 'A' { 'B' } else { 'A' }
+        );
         let enc = split_peer4_long(&tampered).expect("still long form");
         assert!(decode_peer4_long(&tampered, enc).is_err());
     }

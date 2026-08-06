@@ -554,6 +554,18 @@ impl agent_module::AgentModule for WorkflowModule {
         }
         tracing::debug!("✓ [WorkflowModule] Workflow handlers registered");
 
+        // Declare the roles we play in the workflow protocol so Discover Features
+        // advertises them (the handler registry alone only exposes the protocol
+        // id). We act as both coordinator (drive transitions) and processor
+        // (mirror a peer-driven workflow).
+        ctx.feature_registry
+            .write()
+            .await
+            .register(didcomm::messaging::Feature::protocol(
+                "https://didcomm.org/workflow/1.0",
+                ["coordinator", "processor"],
+            ));
+
         // Wire the workflow module's outbound send so `start`/`advance` push
         // protocol messages to the peer's mirror. The module stays
         // transport-agnostic; the DIDComm wire shape (Aries `@type` + a `body`

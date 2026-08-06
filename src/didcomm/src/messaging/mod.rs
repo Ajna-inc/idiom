@@ -26,10 +26,12 @@
 //! # }
 //! ```
 
+pub mod feature_registry;
 pub mod handlers;
 pub mod services;
 
 // Re-exports
+pub use feature_registry::{Feature, FeatureRegistry};
 pub use handlers::{
     HandlerRef, HandlerRegistry, InboundMessage, MessageContext, MessageHandler,
     MessageHandlerError, OutboundMessage,

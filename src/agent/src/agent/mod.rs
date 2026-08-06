@@ -138,6 +138,9 @@ pub struct Agent {
     /// Handler registry for DIDComm messages
     handler_registry: Arc<RwLock<didcomm::messaging::HandlerRegistry>>,
 
+    /// Declarative feature registry for Discover Features (roles/goal-codes/send-only)
+    feature_registry: Arc<RwLock<didcomm::messaging::FeatureRegistry>>,
+
     /// Registered mediation key (did:key format) shared with handlers
     /// CRITICAL: This is the key registered with the mediator. All connection DIDs
     /// must use this key as their recipient key, otherwise the mediator cannot

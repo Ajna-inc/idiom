@@ -8,7 +8,7 @@ use didcomm::core::Message;
 use didcomm::messaging::handlers::{
     InboundMessage, MessageContext, MessageHandler, OutboundMessage, Result as HResult,
 };
-use didcomm::messaging::HandlerRegistry;
+use didcomm::messaging::{Feature, FeatureRegistry, HandlerRegistry};
 use protocol_discover_features::*;
 use tokio::sync::RwLock;
 
@@ -26,8 +26,10 @@ impl MessageHandler for Advertise {
     }
 }
 
-async fn registry_with_protocols() -> Arc<RwLock<HandlerRegistry>> {
+/// Handler registry seeded with a few protocols, plus an empty feature registry.
+async fn registries() -> (Arc<RwLock<HandlerRegistry>>, Arc<RwLock<FeatureRegistry>>) {
     let registry = Arc::new(RwLock::new(HandlerRegistry::new()));
+    let features = Arc::new(RwLock::new(FeatureRegistry::new()));
     {
         let mut w = registry.write().await;
         w.register(Arc::new(Advertise(vec![
@@ -35,10 +37,16 @@ async fn registry_with_protocols() -> Arc<RwLock<HandlerRegistry>> {
             "https://didcomm.org/coordinate-mediation/1.0/mediate-request".into(),
             "https://didcomm.org/coordinate-mediation/1.0/mediate-grant".into(),
         ])));
-        w.register(Arc::new(DiscoverFeaturesV1Handler::new(registry.clone())));
-        w.register(Arc::new(DiscoverFeaturesV2Handler::new(registry.clone())));
+        w.register(Arc::new(DiscoverFeaturesV1Handler::new(
+            registry.clone(),
+            features.clone(),
+        )));
+        w.register(Arc::new(DiscoverFeaturesV2Handler::new(
+            registry.clone(),
+            features.clone(),
+        )));
     }
-    registry
+    (registry, features)
 }
 
 fn inbound(msg_type: &str, body: serde_json::Value) -> InboundMessage {
@@ -59,8 +67,8 @@ fn inbound(msg_type: &str, body: serde_json::Value) -> InboundMessage {
 
 #[tokio::test]
 async fn v1_query_discloses_and_threads_back() {
-    let registry = registry_with_protocols().await;
-    let handler = DiscoverFeaturesV1Handler::new(registry.clone());
+    let (registry, features) = registries().await;
+    let handler = DiscoverFeaturesV1Handler::new(registry.clone(), features.clone());
 
     let out = handler
         .handle(inbound(
@@ -95,8 +103,8 @@ async fn v1_query_discloses_and_threads_back() {
 
 #[tokio::test]
 async fn v1_wildcard_narrows_results() {
-    let registry = registry_with_protocols().await;
-    let handler = DiscoverFeaturesV1Handler::new(registry.clone());
+    let (registry, features) = registries().await;
+    let handler = DiscoverFeaturesV1Handler::new(registry.clone(), features.clone());
     let out = handler
         .handle(inbound(
             QUERY_V1_TYPE,
@@ -112,8 +120,8 @@ async fn v1_wildcard_narrows_results() {
 
 #[tokio::test]
 async fn v2_queries_disclose_protocols() {
-    let registry = registry_with_protocols().await;
-    let handler = DiscoverFeaturesV2Handler::new(registry.clone());
+    let (registry, features) = registries().await;
+    let handler = DiscoverFeaturesV2Handler::new(registry.clone(), features.clone());
     let out = handler
         .handle(inbound(
             QUERIES_V2_TYPE,
@@ -133,9 +141,10 @@ async fn v2_queries_disclose_protocols() {
 }
 
 #[tokio::test]
-async fn v2_goal_code_query_is_ignored() {
-    let registry = registry_with_protocols().await;
-    let handler = DiscoverFeaturesV2Handler::new(registry.clone());
+async fn v2_goal_code_query_empty_without_declarations() {
+    // No module declared goal-codes, so a goal-code query discloses nothing.
+    let (registry, features) = registries().await;
+    let handler = DiscoverFeaturesV2Handler::new(registry.clone(), features.clone());
     let out = handler
         .handle(inbound(
             QUERIES_V2_TYPE,
@@ -148,4 +157,68 @@ async fn v2_goal_code_query_is_ignored() {
         .unwrap();
     let d: DisclosuresMessage = serde_json::from_value(out.message.body).unwrap();
     assert!(d.disclosures.is_empty());
+}
+
+/// Declared roles, goal-codes, and send-only protocols are surfaced on top of
+/// the auto-derived handler-registry protocols (the hybrid registry).
+#[tokio::test]
+async fn v2_declared_roles_goal_codes_and_send_only() {
+    let (registry, features) = registries().await;
+    {
+        let mut w = features.write().await;
+        // Roles for a protocol that also has an inbound handler.
+        w.register(Feature::protocol(
+            "https://didcomm.org/coordinate-mediation/1.0",
+            ["mediator"],
+        ));
+        // A send-only protocol (no inbound handler at all).
+        w.register(Feature::protocol(
+            "https://didcomm.org/report-problem/2.0",
+            ["notifier"],
+        ));
+        w.register(Feature::goal_code("aries.vc.issue"));
+    }
+    let handler = DiscoverFeaturesV2Handler::new(registry.clone(), features.clone());
+    let out = handler
+        .handle(inbound(
+            QUERIES_V2_TYPE,
+            serde_json::json!({
+                "queries": [
+                    { "feature-type": "protocol", "match": "https://didcomm.org/*" },
+                    { "feature-type": "goal-code", "match": "aries.*" }
+                ]
+            }),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let d: DisclosuresMessage = serde_json::from_value(out.message.body).unwrap();
+
+    // Declared roles override the auto-derived (role-less) coordinate-mediation.
+    let cm = d
+        .disclosures
+        .iter()
+        .find(|x| x.id == "https://didcomm.org/coordinate-mediation/1.0")
+        .expect("coordinate-mediation disclosed");
+    assert_eq!(cm.roles.as_deref(), Some(&["mediator".to_string()][..]));
+
+    // Send-only protocol appears even though no handler advertises it.
+    assert!(d
+        .disclosures
+        .iter()
+        .any(|x| x.id == "https://didcomm.org/report-problem/2.0"));
+
+    // Auto-derived protocol with no declared roles still discloses (roles=None).
+    let bm = d
+        .disclosures
+        .iter()
+        .find(|x| x.id == "https://didcomm.org/basicmessage/1.0")
+        .expect("basicmessage disclosed");
+    assert!(bm.roles.is_none());
+
+    // Declared goal-code is disclosed.
+    assert!(d
+        .disclosures
+        .iter()
+        .any(|x| x.feature_type == "goal-code" && x.id == "aries.vc.issue"));
 }

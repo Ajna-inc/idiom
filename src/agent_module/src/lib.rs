@@ -51,6 +51,9 @@ pub struct ModuleContext {
     pub events: Arc<agent_events::EventBus>,
     /// DIDComm handler registry — modules add their handlers here.
     pub handler_registry: Arc<tokio::sync::RwLock<didcomm::messaging::HandlerRegistry>>,
+    /// Discoverable-feature registry — modules declare the protocols/goal-codes
+    /// (and roles) they support so Discover Features can advertise them.
+    pub feature_registry: Arc<tokio::sync::RwLock<didcomm::messaging::FeatureRegistry>>,
     /// Record storage backend.
     pub storage: Arc<dyn agent_core::traits::StorageProvider>,
     /// Key-management wallet backend.

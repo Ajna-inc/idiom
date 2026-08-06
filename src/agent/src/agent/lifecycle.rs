@@ -149,6 +149,9 @@ impl Agent {
         // Create handler registry (empty - handlers registered during initialize)
         let handler_registry = Arc::new(RwLock::new(didcomm::messaging::HandlerRegistry::new()));
 
+        // Create feature registry (empty - modules declare features during initialize)
+        let feature_registry = Arc::new(RwLock::new(didcomm::messaging::FeatureRegistry::new()));
+
         // Create agent DID and key ID holders (initialized during initialize())
         let agent_did = Arc::new(RwLock::new(None));
         let agent_key_id = Arc::new(RwLock::new(None));
@@ -503,6 +506,7 @@ impl Agent {
             transport: (*transport_arc).clone(), // Need to dereference and clone the inner value
             dispatcher,
             handler_registry,
+            feature_registry,
             registered_mediation_key,
             mediation_routing_keys,
             pending_key_registrations,
@@ -824,12 +828,19 @@ impl Agent {
         // read it at query time.
         {
             let registry = self.handler_registry.clone();
+            let features = self.feature_registry.clone();
             let mut w = registry.write().await;
             w.register(Arc::new(
-                protocol_discover_features::DiscoverFeaturesV1Handler::new(registry.clone()),
+                protocol_discover_features::DiscoverFeaturesV1Handler::new(
+                    registry.clone(),
+                    features.clone(),
+                ),
             ));
             w.register(Arc::new(
-                protocol_discover_features::DiscoverFeaturesV2Handler::new(registry.clone()),
+                protocol_discover_features::DiscoverFeaturesV2Handler::new(
+                    registry.clone(),
+                    features.clone(),
+                ),
             ));
             tracing::debug!("✓ Discover Features (v1 + v2) handlers registered");
         }
@@ -852,6 +863,7 @@ impl Agent {
             container: self.container.clone(),
             events: self.events.clone(),
             handler_registry: self.handler_registry.clone(),
+            feature_registry: self.feature_registry.clone(),
             storage: self.storage.clone(),
             wallet: self.wallet_provider.clone(),
             sender,
