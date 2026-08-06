@@ -29,6 +29,7 @@ didcomm = { path = "../didcomm" }
 protocol_oob = { path = "../protocols/oob", features = ["events"] }
 protocol_connections = { path = "../protocols/connections", features = ["events"] }
 protocol_basic_messages = { path = "../protocols/basic_messages", features = ["events"] }
+protocol_discover_features = { path = "../protocols/discover_features" }
 protocol_user_profile = { path = "../protocols/user_profile", features = ["events"] }
 protocol_coordinate_mediation = { path = "../protocols/coordinate_mediation", features = ["events"] }
 protocol_pickup = { path = "../protocols/pickup", features = ["events"] }

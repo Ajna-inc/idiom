@@ -151,6 +151,7 @@ dependencies = [
  "protocol_connections",
  "protocol_coordinate_mediation",
  "protocol_credentials",
+ "protocol_discover_features",
  "protocol_oob",
  "protocol_pickup",
  "protocol_proofs",
@@ -6018,6 +6019,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid 1.20.0",
+]
+
+[[package]]
+name = "protocol_discover_features"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "didcomm 0.1.0",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "uuid 1.20.0",

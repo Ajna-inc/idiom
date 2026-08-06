@@ -24,6 +24,7 @@ members = [
     "protocols/push_notifications",
     "protocols/workflow",
     "protocols/signing",
+    "protocols/discover_features",
     "protocols/credentials",
     "protocols/proofs",
     "protocols/poe",

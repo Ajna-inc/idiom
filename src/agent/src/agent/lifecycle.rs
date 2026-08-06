@@ -818,6 +818,22 @@ impl Agent {
             }
         }
 
+        // Discover Features (RFC 0031 v1 + RFC 0557 v2): answer "which protocols
+        // do you support?" queries. Registered after all modules so it can
+        // enumerate every protocol; the handlers hold the shared registry and
+        // read it at query time.
+        {
+            let registry = self.handler_registry.clone();
+            let mut w = registry.write().await;
+            w.register(Arc::new(
+                protocol_discover_features::DiscoverFeaturesV1Handler::new(registry.clone()),
+            ));
+            w.register(Arc::new(
+                protocol_discover_features::DiscoverFeaturesV2Handler::new(registry.clone()),
+            ));
+            tracing::debug!("✓ Discover Features (v1 + v2) handlers registered");
+        }
+
         *state = AgentState::Initialized;
         Ok(())
     }
