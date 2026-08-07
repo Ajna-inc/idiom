@@ -451,10 +451,15 @@ impl MessageProcessor {
 
         // Check connection record for DIDComm version and stored keys
         let mut is_v2 = false;
+        let mut negotiated_v1 = false;
         let mut has_stored_keys = false;
         if let Some(conn_id) = &outbound.connection_id {
             if let Ok(Some(conn_record)) = self.connection_repository.find_by_id(conn_id).await {
                 is_v2 = conn_record.is_v2();
+                // Authoritative negotiated version recorded at handshake. `Some("1")`
+                // is set by the connection request handler for every v1 peer
+                // (did:peer:1 / did_doc~attach / a mediated did:peer:4 wallet).
+                negotiated_v1 = conn_record.didcomm_version.as_deref() == Some("1");
                 has_stored_keys = conn_record.their_authentication_key_base58.is_some()
                     && conn_record.their_key_agreement_key_base58.is_some();
                 // Prefer the connection's negotiated DIDs for packing — the same full
@@ -469,6 +474,18 @@ impl MessageProcessor {
                     sender_did = conn_record.did.clone();
                 }
             }
+        }
+
+        if negotiated_v1 {
+            trace!("Packing with v1 (connection negotiated DIDComm v1)");
+            return self
+                .pack_with_v1(
+                    message_to_v1_wire(&outbound.message),
+                    &recipient_did,
+                    &sender_did,
+                    &outbound.connection_id,
+                )
+                .await;
         }
 
         // Path 0a: the recipient's self-describing peer DID (numalgo 2 OR 4)
