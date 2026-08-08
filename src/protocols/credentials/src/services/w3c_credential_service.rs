@@ -54,7 +54,11 @@ impl W3cCredentialExchangeServiceBuilder {
     /// Wire the agent event bus so protocol transitions emit
     /// `credential_exchange.state_changed` events.
     #[cfg(feature = "events")]
-    pub fn with_event_bus(mut self, event_bus: Arc<agent_events::EventBus>, agent_id: String) -> Self {
+    pub fn with_event_bus(
+        mut self,
+        event_bus: Arc<agent_events::EventBus>,
+        agent_id: String,
+    ) -> Self {
         self.events = Some((event_bus, agent_id));
         self
     }
@@ -394,11 +398,7 @@ impl W3cCredentialExchangeService {
 
     /// Process a received credential (holder side): verify (best-effort) and
     /// record it → `Done`. Returns the stored credential id.
-    pub async fn process_credential(
-        &self,
-        exchange_id: &str,
-        credential: &str,
-    ) -> Result<String> {
+    pub async fn process_credential(&self, exchange_id: &str, credential: &str) -> Result<String> {
         let mut record = self
             .repository
             .find_by_id(exchange_id)
@@ -469,6 +469,16 @@ impl W3cCredentialExchangeService {
     }
 }
 
+fn issuer_id(credential: &serde_json::Value) -> Option<String> {
+    match credential.get("issuer") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(serde_json::Value::Object(o)) => {
+            o.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,7 +510,8 @@ mod tests {
             &self,
             credential: &str,
             _o: &VerifyCredentialOptions,
-        ) -> std::result::Result<VerificationResult, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> std::result::Result<VerificationResult, Box<dyn std::error::Error + Send + Sync>>
+        {
             let cred: W3cCredential = serde_json::from_str(credential)?;
             Ok(VerificationResult::valid(
                 CredentialData::V1(cred),
@@ -518,7 +529,8 @@ mod tests {
             &self,
             _p: &str,
             _o: &VerifyCredentialOptions,
-        ) -> std::result::Result<VerificationResult, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> std::result::Result<VerificationResult, Box<dyn std::error::Error + Send + Sync>>
+        {
             Ok(VerificationResult::invalid("n/a"))
         }
         fn can_handle(&self, credential: &str) -> bool {
@@ -554,7 +566,11 @@ mod tests {
 
         // Issuer offers.
         let (irec, offer) = issuer
-            .create_offer(Some("conn"), DidCommCredentialFormat::JsonLd, sample_detail())
+            .create_offer(
+                Some("conn"),
+                DidCommCredentialFormat::JsonLd,
+                sample_detail(),
+            )
             .await
             .unwrap();
         assert_eq!(irec.state, CredentialExchangeState::OfferSent);
@@ -574,8 +590,8 @@ mod tests {
             .await
             .unwrap();
         let out = issuer.accept_request(&irec.id, None).await.unwrap();
-        let issue_msg = crate::messages::IssueCredentialMessage::from_didcomm_message(&out.message)
-            .unwrap();
+        let issue_msg =
+            crate::messages::IssueCredentialMessage::from_didcomm_message(&out.message).unwrap();
         assert!(issue_msg.credential_json.contains("FakeSig2024"));
 
         // Holder processes issued credential → Done.
@@ -603,17 +619,5 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, CredentialError::UnsupportedFormat(_)));
-    }
-}
-
-/// Extract the issuer id from a credential value (`issuer` as string, or
-/// `issuer.id`).
-fn issuer_id(credential: &serde_json::Value) -> Option<String> {
-    match credential.get("issuer") {
-        Some(serde_json::Value::String(s)) => Some(s.clone()),
-        Some(serde_json::Value::Object(o)) => {
-            o.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
-        }
-        _ => None,
     }
 }

@@ -107,6 +107,9 @@ impl CredentialsModule {
             // FFI `credentials.*` domain) handle `vc+sd-jwt` credentials
             // directly, not only through the dedicated store/verify shim.
             let sd_jwt_service = Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
+            // `mut` is only used when the `anoncreds` feature adds a format
+            // service below; without it the builder is never reassigned.
+            #[cfg_attr(not(feature = "anoncreds"), allow(unused_mut))]
             let mut builder = UnifiedCredentialService::builder(repository_arc.clone())
                 .with_format_service(CredentialFormat::JwtVc, jwt_service)
                 .with_format_service(CredentialFormat::JsonLd, jsonld_service)
@@ -129,7 +132,8 @@ impl CredentialsModule {
                         Arc::new(AnonCredsHolderService::new(registry.clone())),
                         Arc::new(AnonCredsVerifierService::new(registry)),
                     ));
-                builder = builder.with_format_service(CredentialFormat::AnonCreds, anoncreds_service);
+                builder =
+                    builder.with_format_service(CredentialFormat::AnonCreds, anoncreds_service);
             }
 
             let service = builder.build();
@@ -809,11 +813,19 @@ impl agent_module::AgentModule for CredentialsModule {
             // Auto-accept offers/requests: mirror the wallet's holder-side
             // convenience (issuers drive issue explicitly via the FFI/API).
             let mut registry = ctx.handler_registry.write().await;
-            registry.register(Arc::new(W3cOfferCredentialHandler::new(service.clone(), true)));
-            registry.register(Arc::new(W3cRequestCredentialHandler::new(service.clone(), true)));
+            registry.register(Arc::new(W3cOfferCredentialHandler::new(
+                service.clone(),
+                true,
+            )));
+            registry.register(Arc::new(W3cRequestCredentialHandler::new(
+                service.clone(),
+                true,
+            )));
             registry.register(Arc::new(W3cIssueCredentialHandler::new(service)));
             drop(registry);
-            tracing::debug!("✓ [CredentialsModule] W3C DIDComm issue-credential handlers registered");
+            tracing::debug!(
+                "✓ [CredentialsModule] W3C DIDComm issue-credential handlers registered"
+            );
         }
 
         Ok(())

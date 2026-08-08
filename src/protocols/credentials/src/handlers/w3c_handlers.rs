@@ -48,7 +48,8 @@ fn first_format_id(message: &DidcommMessage) -> Option<String> {
 fn is_w3c_for(service: &W3cCredentialExchangeService, message: &DidcommMessage) -> bool {
     match first_format_id(message) {
         Some(id) => {
-            DidCommCredentialFormat::from_format_id(&id).is_some() && service.supports_format_id(&id)
+            DidCommCredentialFormat::from_format_id(&id).is_some()
+                && service.supports_format_id(&id)
         }
         None => false,
     }

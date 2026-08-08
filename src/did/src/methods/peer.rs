@@ -209,7 +209,7 @@ fn decode_peer4_long(did: &str, encoded: &str) -> ResolutionResult<DidDocument> 
                 }
             }
         }
-        
+
         let mut vms: Vec<serde_json::Value> = obj
             .get("verificationMethod")
             .and_then(|v| v.as_array())
@@ -795,7 +795,10 @@ mod tests {
 
         // parse_peer4 resolves the mediated service + dereferenced recipient key.
         let svc = parse_peer4(&did).unwrap();
-        assert_eq!(svc.service_endpoint.as_deref(), Some("https://mediator.example:3002"));
+        assert_eq!(
+            svc.service_endpoint.as_deref(),
+            Some("https://mediator.example:3002")
+        );
         assert_eq!(svc.routing_keys.len(), 1);
         assert_eq!(
             svc.authentication_key.as_deref(),

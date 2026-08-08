@@ -161,7 +161,8 @@ impl Agent {
             ));
             let jsonld =
                 std::sync::Arc::new(vc::formats::jsonld_vc::JsonLdVcService::new(wallet.clone()));
-            let sd_jwt = std::sync::Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
+            let sd_jwt =
+                std::sync::Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
             let repo = module.credential_exchange_service().repository().clone();
             std::sync::Arc::new(
                 W3cCredentialExchangeService::builder(repo)

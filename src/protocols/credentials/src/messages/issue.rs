@@ -50,11 +50,7 @@ impl IssueCredentialMessage {
     /// Create an issue message with an explicit attachment format id (e.g. a
     /// W3C / JWT / SD-JWT `*@v1.0` credential id). AnonCreds [`Self::new`] is
     /// `new_with_format(thread_id, json, ANONCREDS_CREDENTIAL)`.
-    pub fn new_with_format(
-        thread_id: String,
-        credential_json: String,
-        format_id: &str,
-    ) -> Self {
+    pub fn new_with_format(thread_id: String, credential_json: String, format_id: &str) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         let attach_id = uuid::Uuid::new_v4().to_string();
         Self {
