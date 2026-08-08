@@ -40,7 +40,11 @@ protocol_workflow = { path = "../protocols/workflow", features = ["events"] }
 
 # AnonCreds (optional - for anonymous credential issuance/verification)
 anoncreds_core = { path = "../credentials/anoncreds_core", optional = true }
-protocol_credentials = { path = "../protocols/credentials", optional = true }
+# Non-optional: carries the W3C / JWT-VC / SD-JWT DIDComm issue-credential
+# exchange (no CL-signature deps without the `anoncreds` feature), so mobile/
+# FFI builds get W3C credential issuance over DIDComm. The `anoncreds` feature
+# adds `protocol_credentials/anoncreds` for the AnonCreds format on top.
+protocol_credentials = { path = "../protocols/credentials", default-features = false, features = ["events", "native"] }
 protocol_proofs = { path = "../protocols/proofs", optional = true }
 # Kanon on-chain AnonCreds registry (VDR) — live Besu client via alloy.
 registry_kanon = { path = "../registry_kanon", optional = true, features = ["besu"] }
@@ -123,7 +127,7 @@ http-server = ["axum", "tower", "tower-http", "async-stream"]
 # only SQLite; servers (mediator_server) turn it on.
 postgres = ["storage/postgres"]
 # AnonCreds - enables AnonCreds credential issuance, holder, and verification
-anoncreds = ["anoncreds_core", "protocol_credentials", "protocol_proofs", "vc/anoncreds"]
+anoncreds = ["anoncreds_core", "protocol_credentials/anoncreds", "protocol_proofs", "vc/anoncreds"]
 # Kanon Postgres storage/wallet backend (matches the ACA-Py kanon_storage schema),
 # selectable via the `Backends` factory / `STORE=kanon`.
 kanon-storage = ["storage/kanon"]

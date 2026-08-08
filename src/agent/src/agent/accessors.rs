@@ -137,6 +137,7 @@ impl Agent {
         if let Some(existing) = &self.anoncreds {
             return Ok(existing.clone());
         }
+        let auto_accept_offers = config.auto_accept_offers;
         let module = crate::modules::AnonCredsModule::with_storage_and_events(
             config,
             registry,
@@ -144,11 +145,67 @@ impl Agent {
             Some((self.events.clone(), self.label())),
         );
 
-        // Register the six DIDComm handlers.
+        // Build the W3C / JWT-VC / SD-JWT DIDComm exchange service, sharing the
+        // AnonCreds exchange repository (so records and thread lookups unify)
+        // and the same wallet-backed `vc` format services the OID4VCI path uses.
+        // The Issue-Credential offer/request/issue handlers are then registered
+        // as *format-dispatching* composites: W3C-family attachments are handled
+        // by this service, everything else (AnonCreds `anoncreds/*`) is delegated
+        // to the unchanged AnonCreds handler — so AnonCreds behaviour is
+        // preserved exactly.
+        let w3c_credential_service = {
+            use protocol_credentials::W3cCredentialExchangeService;
+            let wallet = self.wallet_provider.clone();
+            let jwt = std::sync::Arc::new(vc::formats::jwt_vc::EnhancedJwtVcService::with_wallet(
+                wallet.clone(),
+            ));
+            let jsonld =
+                std::sync::Arc::new(vc::formats::jsonld_vc::JsonLdVcService::new(wallet.clone()));
+            let sd_jwt = std::sync::Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
+            let repo = module.credential_exchange_service().repository().clone();
+            std::sync::Arc::new(
+                W3cCredentialExchangeService::builder(repo)
+                    .with_format_service(jwt)
+                    .with_format_service(jsonld)
+                    .with_format_service(sd_jwt)
+                    .with_event_bus(self.events.clone(), self.label())
+                    .build(),
+            )
+        };
+
+        // Register the DIDComm handlers, wrapping the credential offer/request/
+        // issue handlers in W3C-dispatching composites.
         let handlers = module.create_handlers();
         let mut registry_lock = self.handler_registry.write().await;
         for handler in handlers {
-            registry_lock.register(handler);
+            use protocol_credentials::{
+                IssueCredentialMessage, OfferCredentialMessage, RequestCredentialMessage,
+                W3cIssueCredentialHandler, W3cOfferCredentialHandler, W3cRequestCredentialHandler,
+            };
+            let types = handler.supported_types();
+            let composite: std::sync::Arc<dyn didcomm::messaging::MessageHandler> =
+                if types.iter().any(|t| t == OfferCredentialMessage::TYPE) {
+                    std::sync::Arc::new(
+                        W3cOfferCredentialHandler::new(
+                            w3c_credential_service.clone(),
+                            auto_accept_offers,
+                        )
+                        .with_fallback(handler),
+                    )
+                } else if types.iter().any(|t| t == RequestCredentialMessage::TYPE) {
+                    std::sync::Arc::new(
+                        W3cRequestCredentialHandler::new(w3c_credential_service.clone(), true)
+                            .with_fallback(handler),
+                    )
+                } else if types.iter().any(|t| t == IssueCredentialMessage::TYPE) {
+                    std::sync::Arc::new(
+                        W3cIssueCredentialHandler::new(w3c_credential_service.clone())
+                            .with_fallback(handler),
+                    )
+                } else {
+                    handler
+                };
+            registry_lock.register(composite);
         }
         drop(registry_lock);
 

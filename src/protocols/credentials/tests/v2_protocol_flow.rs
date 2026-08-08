@@ -1,3 +1,6 @@
+// AnonCreds-backed flow: only compiled when the `anoncreds` feature is on.
+#![cfg(feature = "anoncreds")]
+
 //! Issue Credential V2 protocol flow tests.
 //!
 //! Walks the entire V2 issuance state machine and checks state transitions at

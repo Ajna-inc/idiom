@@ -36,6 +36,14 @@ pub struct CredentialExchangeRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cred_def_id: Option<String>,
 
+    /// DIDComm attachment format id negotiated for this exchange, e.g.
+    /// `aries/ld-proof-vc-detail@v1.0`. `None` for legacy AnonCreds records
+    /// (which are identified by the AnonCreds `anoncreds/*` ids on the wire).
+    /// Set by the W3C / JWT / SD-JWT path so the issuer can pick the right
+    /// [`vc::core::CredentialFormatService`] at issue time.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub credential_format: Option<String>,
+
     /// Serialized credential proposal JSON (set when the exchange started
     /// from a propose-credential message).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -90,6 +98,7 @@ impl CredentialExchangeRecord {
             state,
             schema_id: None,
             cred_def_id: None,
+            credential_format: None,
             credential_proposal_json: None,
             credential_offer_json: None,
             credential_request_json: None,

@@ -47,6 +47,33 @@ impl RequestCredentialMessage {
         }
     }
 
+    /// Create a request with an explicit attachment format id (e.g. a W3C /
+    /// JWT / SD-JWT `*-detail@v1.0` id). AnonCreds [`Self::new`] is
+    /// `new_with_format(thread_id, json, ANONCREDS_CREDENTIAL_REQUEST)`.
+    pub fn new_with_format(
+        thread_id: String,
+        credential_request_json: String,
+        format_id: &str,
+    ) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+        let attach_id = uuid::Uuid::new_v4().to_string();
+        Self {
+            id,
+            thread_id,
+            formats: vec![AttachmentFormatDescriptor {
+                attach_id,
+                format: format_id.to_string(),
+            }],
+            comment: None,
+            credential_request_json,
+        }
+    }
+
+    /// The negotiated attachment format id (first descriptor).
+    pub fn format_id(&self) -> Option<&str> {
+        self.formats.first().map(|f| f.format.as_str())
+    }
+
     /// Set an optional comment
     pub fn with_comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
@@ -70,7 +97,11 @@ impl RequestCredentialMessage {
             description: None,
             filename: None,
             media_type: Some("application/json".to_string()),
-            format: Some(formats::ANONCREDS_CREDENTIAL_REQUEST.to_string()),
+            format: Some(
+                self.format_id()
+                    .unwrap_or(formats::ANONCREDS_CREDENTIAL_REQUEST)
+                    .to_string(),
+            ),
             lastmod_time: None,
             byte_count: None,
             data: AttachmentData::Json {

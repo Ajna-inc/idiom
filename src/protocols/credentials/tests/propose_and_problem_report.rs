@@ -1,3 +1,6 @@
+// AnonCreds-backed flow: only compiled when the `anoncreds` feature is on.
+#![cfg(feature = "anoncreds")]
+
 //! Integration tests for the propose-credential and problem-report
 //! messages added to Issue Credential V2:
 //!

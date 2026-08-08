@@ -102,10 +102,37 @@ impl CredentialsModule {
             // generic "Unknown credential format" error.
             let jwt_service = Arc::new(EnhancedJwtVcService::with_wallet(wallet.clone()));
             let jsonld_service = Arc::new(JsonLdVcService::new(wallet.clone()));
-            let service = UnifiedCredentialService::builder(repository_arc.clone())
+            // SD-JWT VC: a first-class format for selective-disclosure wallets.
+            // Registering it here means the unified sign/verify path (and the
+            // FFI `credentials.*` domain) handle `vc+sd-jwt` credentials
+            // directly, not only through the dedicated store/verify shim.
+            let sd_jwt_service = Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
+            let mut builder = UnifiedCredentialService::builder(repository_arc.clone())
                 .with_format_service(CredentialFormat::JwtVc, jwt_service)
                 .with_format_service(CredentialFormat::JsonLd, jsonld_service)
-                .build();
+                .with_format_service(CredentialFormat::SdJwt, sd_jwt_service);
+
+            // AnonCreds: only compiled when the `anoncreds` feature is on
+            // (mobile/light builds skip the CL-signature stack). Services are
+            // backed by the same StorageProvider as records, so cred-defs /
+            // schemas resolve from the agent's own store.
+            #[cfg(feature = "anoncreds")]
+            {
+                use anoncreds_core::{
+                    AnonCredsHolderService, AnonCredsIssuerService, AnonCredsVerifierService,
+                    StorageBackedRegistry,
+                };
+                let registry = Arc::new(StorageBackedRegistry::new(storage.clone()));
+                let anoncreds_service =
+                    Arc::new(vc::formats::anoncreds::AnonCredsFormatService::new(
+                        Arc::new(AnonCredsIssuerService::new(registry.clone())),
+                        Arc::new(AnonCredsHolderService::new(registry.clone())),
+                        Arc::new(AnonCredsVerifierService::new(registry)),
+                    ));
+                builder = builder.with_format_service(CredentialFormat::AnonCreds, anoncreds_service);
+            }
+
+            let service = builder.build();
 
             // Create another repository for the module (since we moved the first into Arc)
             let repository = CredentialRepository::new(storage.clone());
@@ -743,10 +770,52 @@ impl agent_module::AgentModule for CredentialsModule {
     }
 
     /// Builds the credential service + repository from `ctx.wallet` /
-    /// `ctx.storage`. No DIDComm handlers are registered (credential exchange
-    /// runs through OID4VCI / AnonCreds).
+    /// `ctx.storage`.
+    ///
+    /// On builds **without** the `anoncreds` feature (mobile/FFI), this also
+    /// registers the W3C / JWT-VC / SD-JWT DIDComm issue-credential handlers so
+    /// credential issuance over a DIDComm connection works. On `anoncreds`
+    /// builds the handlers are registered instead by
+    /// [`Agent::setup_anoncreds_with_registry`] as format-dispatching
+    /// composites (W3C + AnonCreds fallback) — registering here too would
+    /// double-register the same message types, so it is feature-gated off.
     async fn register(&self, ctx: &agent_module::ModuleContext) -> agent_module::ModuleResult {
         self.ensure_built(ctx.wallet.clone(), ctx.storage.clone());
+
+        #[cfg(not(feature = "anoncreds"))]
+        {
+            use protocol_credentials::{
+                StorageBackedCredentialExchangeRepository, W3cCredentialExchangeService,
+                W3cIssueCredentialHandler, W3cOfferCredentialHandler, W3cRequestCredentialHandler,
+            };
+
+            let wallet = ctx.wallet.clone();
+            let jwt = Arc::new(EnhancedJwtVcService::with_wallet(wallet.clone()));
+            let jsonld = Arc::new(JsonLdVcService::new(wallet.clone()));
+            let sd_jwt = Arc::new(vc::formats::sd_jwt::SdJwtService::new(wallet.clone()));
+
+            let repository = Arc::new(StorageBackedCredentialExchangeRepository::new(
+                ctx.storage.clone(),
+            ));
+            let service = Arc::new(
+                W3cCredentialExchangeService::builder(repository)
+                    .with_format_service(jwt)
+                    .with_format_service(jsonld)
+                    .with_format_service(sd_jwt)
+                    .with_event_bus(ctx.events.clone(), ctx.label.clone())
+                    .build(),
+            );
+
+            // Auto-accept offers/requests: mirror the wallet's holder-side
+            // convenience (issuers drive issue explicitly via the FFI/API).
+            let mut registry = ctx.handler_registry.write().await;
+            registry.register(Arc::new(W3cOfferCredentialHandler::new(service.clone(), true)));
+            registry.register(Arc::new(W3cRequestCredentialHandler::new(service.clone(), true)));
+            registry.register(Arc::new(W3cIssueCredentialHandler::new(service)));
+            drop(registry);
+            tracing::debug!("✓ [CredentialsModule] W3C DIDComm issue-credential handlers registered");
+        }
+
         Ok(())
     }
 }

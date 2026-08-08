@@ -47,6 +47,33 @@ impl IssueCredentialMessage {
         }
     }
 
+    /// Create an issue message with an explicit attachment format id (e.g. a
+    /// W3C / JWT / SD-JWT `*@v1.0` credential id). AnonCreds [`Self::new`] is
+    /// `new_with_format(thread_id, json, ANONCREDS_CREDENTIAL)`.
+    pub fn new_with_format(
+        thread_id: String,
+        credential_json: String,
+        format_id: &str,
+    ) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+        let attach_id = uuid::Uuid::new_v4().to_string();
+        Self {
+            id,
+            thread_id,
+            formats: vec![AttachmentFormatDescriptor {
+                attach_id,
+                format: format_id.to_string(),
+            }],
+            comment: None,
+            credential_json,
+        }
+    }
+
+    /// The negotiated attachment format id (first descriptor).
+    pub fn format_id(&self) -> Option<&str> {
+        self.formats.first().map(|f| f.format.as_str())
+    }
+
     /// Set an optional comment
     pub fn with_comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
@@ -73,7 +100,7 @@ impl IssueCredentialMessage {
             "credentials~attach": [
                 crate::messages::v2_attachment(
                     attach_id,
-                    formats::ANONCREDS_CREDENTIAL,
+                    self.format_id().unwrap_or(formats::ANONCREDS_CREDENTIAL),
                     &self.credential_json,
                 )
             ],

@@ -75,6 +75,31 @@ impl OfferCredentialMessage {
         }
     }
 
+    /// Create an offer with an explicit attachment format id (e.g. one of the
+    /// W3C / JWT / SD-JWT `*-detail@v1.0` ids in [`crate::messages::formats`]).
+    /// The AnonCreds [`Self::new`] is `new_with_format(json,
+    /// ANONCREDS_CREDENTIAL_OFFER)`.
+    pub fn new_with_format(credential_offer_json: String, format_id: &str) -> Self {
+        let id = uuid::Uuid::new_v4().to_string();
+        let attach_id = uuid::Uuid::new_v4().to_string();
+        Self {
+            id: id.clone(),
+            thread_id: id,
+            formats: vec![AttachmentFormatDescriptor {
+                attach_id,
+                format: format_id.to_string(),
+            }],
+            comment: None,
+            credential_offer_json,
+        }
+    }
+
+    /// The negotiated attachment format id (first descriptor), e.g.
+    /// `aries/ld-proof-vc-detail@v1.0`.
+    pub fn format_id(&self) -> Option<&str> {
+        self.formats.first().map(|f| f.format.as_str())
+    }
+
     /// Set an optional comment
     pub fn with_comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
@@ -98,7 +123,11 @@ impl OfferCredentialMessage {
             description: None,
             filename: None,
             media_type: Some("application/json".to_string()),
-            format: Some(formats::ANONCREDS_CREDENTIAL_OFFER.to_string()),
+            format: Some(
+                self.format_id()
+                    .unwrap_or(formats::ANONCREDS_CREDENTIAL_OFFER)
+                    .to_string(),
+            ),
             lastmod_time: None,
             byte_count: None,
             data: AttachmentData::Json { json: offer_value },

@@ -17,7 +17,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```ignore
 //! use protocol_credentials::{CredentialExchangeService, CredentialExchangeRole, CredentialExchangeState};
 //!
 //! // Create credential exchange from offer
@@ -27,6 +27,7 @@
 
 pub mod domain;
 pub mod events;
+pub mod formats;
 pub mod handlers;
 pub mod messages;
 pub mod repository;
@@ -35,10 +36,23 @@ pub mod services;
 // Re-export commonly used types
 pub use domain::{CredentialExchangeRole, CredentialExchangeState};
 pub use events::{topics, types, CredentialStateChangedPayload};
+pub use formats::{CredentialDetail, DidCommCredentialFormat};
+
+// AnonCreds Issue-Credential handlers + service — feature-gated.
+#[cfg(feature = "anoncreds")]
 pub use handlers::{
     CredentialAckHandler, IssueCredentialHandler, OfferCredentialHandler, ProblemReportHandler,
     ProposeCredentialHandler, RequestCredentialHandler,
 };
+#[cfg(feature = "anoncreds")]
+pub use services::CredentialExchangeService;
+
+// W3C / JWT-VC / SD-JWT handlers + service — always available.
+pub use handlers::{
+    W3cIssueCredentialHandler, W3cOfferCredentialHandler, W3cRequestCredentialHandler,
+};
+pub use services::{W3cCredentialExchangeService, W3cCredentialExchangeServiceBuilder};
+
 pub use messages::{
     are_preview_attributes_equal, problem_codes, AckMessage, AckStatus, CredentialPreviewAttribute,
     FixHint, Impact, IssueCredentialMessage, OfferCredentialMessage, ProblemDescription,
@@ -48,7 +62,6 @@ pub use repository::{
     CredentialExchangeRecord, CredentialExchangeRepository, CredentialExchangeRepositoryTrait,
     StorageBackedCredentialExchangeRepository,
 };
-pub use services::CredentialExchangeService;
 
 /// Error types for the Issue Credential protocol
 pub mod error {
@@ -92,6 +105,12 @@ pub mod error {
         #[error("AnonCreds error: {0}")]
         AnonCreds(String),
 
+        #[error("Unsupported credential format: {0}")]
+        UnsupportedFormat(String),
+
+        #[error("Credential format service error: {0}")]
+        FormatService(String),
+
         #[error("Serialization error: {0}")]
         Serialization(#[from] serde_json::Error),
 
@@ -99,6 +118,7 @@ pub mod error {
         Protocol(String),
     }
 
+    #[cfg(feature = "anoncreds")]
     impl From<anoncreds_core::AnonCredsError> for CredentialError {
         fn from(e: anoncreds_core::AnonCredsError) -> Self {
             CredentialError::AnonCreds(e.to_string())
