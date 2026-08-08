@@ -1,0 +1,18 @@
+# cargo-audit configuration. Advisories listed here are triaged as
+# non-exploitable in this build and have no available fix; everything else must
+# pass. Re-review on each dependency bump.
+
+[advisories]
+ignore = [
+    # rsa "Marvin" timing side-channel. Reachable ONLY through `sqlx-mysql`,
+    # which is present in Cargo.lock but NOT compiled — we build sqlx with
+    # `default-features = false, features = ["postgres"]` (no mysql). No fixed
+    # release of `rsa` exists. Re-evaluate if a MySQL backend is ever enabled.
+    "RUSTSEC-2023-0071",
+
+    # owning_ref soundness issues. Transitive via `json-ld-context-processing`
+    # (JSON-LD / VC processing). No fixed version is available upstream; the
+    # unsoundness requires specific misuse we don't drive directly. Remove if
+    # the json-ld stack drops owning_ref.
+    "RUSTSEC-2022-0040",
+]

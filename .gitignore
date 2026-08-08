@@ -2,7 +2,10 @@
 target/
 /src/target/
 **/*.rs.bk
-/src/.cargo/
+# Ignore local cargo config etc. under src/.cargo, but KEEP the committed
+# cargo-audit ignore list (CI reads src/.cargo/audit.toml).
+/src/.cargo/*
+!/src/.cargo/audit.toml
 
 # NOTE: src/Cargo.lock is intentionally tracked. The minimal workspace reuses
 # idiom's lockfile to pin around a yanked transitive crate (core2 0.4.0);
