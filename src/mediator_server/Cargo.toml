@@ -14,7 +14,8 @@ path = "src/main.rs"
 [dependencies]
 # Internal crates
 agent_core = { path = "../core/agent_core" }
-storage = { path = "../storage" }
+# Server: enable the Askar Postgres backend (mobile/FFI stays SQLite-only).
+storage = { path = "../storage", features = ["postgres"] }
 wallet = { path = "../wallet" }
 did = { path = "../did" }
 didcomm = { path = "../didcomm" }

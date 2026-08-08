@@ -63,7 +63,10 @@ url = "2.5"
 multibase = "0.9"
 sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
 bs58 = "0.5"
-aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main" }
+# Uses the workspace pin (default-features = false, sqlite baseline) so the
+# agent doesn't force askar's full default backends. Postgres arrives via the
+# `postgres` feature (→ storage/postgres) for server builds only.
+aries-askar = { workspace = true }
 reqwest = "0.12"  # For HTTP client in async message sending
 hex = "0.4"  # For hex encoding/decoding blockchain data
 blake3 = "1"  # For ACK signing hash in atomic eCash transfers
@@ -116,6 +119,9 @@ version = "0.3"
 [features]
 default = []
 http-server = ["axum", "tower", "tower-http", "async-stream"]
+# Askar Postgres backend (server-side). Off by default so mobile/FFI links
+# only SQLite; servers (mediator_server) turn it on.
+postgres = ["storage/postgres"]
 # AnonCreds - enables AnonCreds credential issuance, holder, and verification
 anoncreds = ["anoncreds_core", "protocol_credentials", "protocol_proofs", "vc/anoncreds"]
 # Kanon Postgres storage/wallet backend (matches the ACA-Py kanon_storage schema),

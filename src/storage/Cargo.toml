@@ -39,6 +39,9 @@ uuid = { workspace = true }
 
 [features]
 default = []
+# Askar Postgres backend (server-side). Off by default so mobile/FFI builds
+# link only SQLite. Enabled up the chain by agent/postgres → mediator_server.
+postgres = ["aries-askar/postgres"]
 # Kanon Postgres storage backend (matches the ACA-Py kanon_storage schema).
 kanon = [
     "dep:sqlx",

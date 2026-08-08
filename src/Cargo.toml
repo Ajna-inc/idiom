@@ -95,7 +95,13 @@ futures-util = "0.3"
 
 # Cryptography & SSI
 # Using Ajna fork with BLS crypto fix (.into_option() -> .into())
-aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main", features = ["sqlite", "postgres"] }
+# default-features = false drops askar's `ffi` (its own C API — we have our
+# own), `logger` (env_logger), and `migration` (IndySDK→Askar) defaults, all
+# dead weight here. `sqlite` is the always-on baseline (mobile/FFI); the
+# postgres backend is opt-in via the `postgres` feature chain
+# (storage → agent → mediator_server) so server builds get it and mobile
+# builds stay sqlite-only.
+aries-askar = { git = "https://github.com/Ajna-inc/askar", branch = "main", default-features = false, features = ["sqlite"] }
 anoncreds = { git = "https://github.com/hyperledger/anoncreds-rs", tag = "v0.2.0", default-features = false, features = ["w3c", "zeroize"] }
 # SICPA DIDComm v2 implementation (Ajna fork)
 didcomm = { git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
