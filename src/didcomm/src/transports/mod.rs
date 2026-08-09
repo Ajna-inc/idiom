@@ -39,8 +39,12 @@ pub mod ws;
 #[cfg(feature = "native")]
 pub use http::HttpInboundTransport;
 
+#[cfg(any(feature = "native", feature = "wasm"))]
 pub use http::HttpOutboundTransport;
-pub use traits::{OutboundTransport, Result, TransportError, TransportMetadata};
+pub use traits::{Result, TransportError, TransportMetadata};
+// OutboundTransport is only defined for native (Send + Sync) or wasm builds
+#[cfg(any(feature = "native", feature = "wasm"))]
+pub use traits::OutboundTransport;
 
 // InboundTransport and MessageReceiver are native-only (require full async runtime)
 #[cfg(feature = "native")]
