@@ -159,6 +159,42 @@ impl BasicMessagesModule {
         Ok(record)
     }
 
+    /// Edit a previously-sent message: update the local record, emit the
+    /// `basic_message.edited` event, and send an `EditMessage` to the peer so
+    /// their copy updates too. The counterpart to the inbound edit handler —
+    /// without this the agent could receive edits but not issue them.
+    pub async fn send_edit(
+        &self,
+        connection_id: &str,
+        message_id: &str,
+        new_content: String,
+    ) -> Result<BasicMessageRecord> {
+        let inner = self.inner();
+        let connection = inner
+            .connection_repository
+            .find_by_id(connection_id)
+            .await
+            .map_err(|e| AgentError::Connections(e.to_string()))?
+            .ok_or_else(|| {
+                AgentError::Connections(format!("Connection not found: {}", connection_id))
+            })?;
+
+        // Service owns the record update + `edited` event; returns the wire
+        // message for us to send (mirrors send_message / create_message).
+        let (edit_message, record) = inner
+            .service
+            .create_edit(message_id, new_content, connection_id)
+            .await
+            .map_err(|e| AgentError::Module(format!("Basic message edit error: {}", e)))?;
+
+        inner
+            .sender
+            .send_via_connection(&connection, &edit_message)
+            .await?;
+
+        Ok(record)
+    }
+
     /// Get all messages for a connection
     pub async fn find_by_connection_id(
         &self,

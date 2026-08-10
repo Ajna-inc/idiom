@@ -112,6 +112,53 @@ impl BasicMessageService {
         Ok((message, record))
     }
 
+    /// Prepare an edit to a previously-sent message: update the stored record's
+    /// content, emit the `edited` event, and return the [`EditMessage`] the
+    /// caller must send to the peer (mirrors [`create_message`], which owns the
+    /// record + event while the module owns the wire send).
+    pub async fn create_edit(
+        &self,
+        message_id: &str,
+        new_content: String,
+        connection_id: &str,
+    ) -> Result<(crate::messages::edit_message::EditMessage, BasicMessageRecord)> {
+        use crate::messages::edit_message::EditMessage;
+
+        let original = self
+            .repository
+            .find_by_id(message_id)
+            .await?
+            .ok_or_else(|| {
+                BasicMessageServiceError::InvalidMessage(format!(
+                    "message not found: {message_id}"
+                ))
+            })?;
+
+        let edit = EditMessage::new(message_id, new_content.clone());
+
+        // Persist the new content locally (same before-send ordering as
+        // create_message's save).
+        let mut updated = original;
+        updated.content = new_content.clone();
+        self.repository.update(&updated).await?;
+
+        #[cfg(feature = "events")]
+        {
+            let payload = crate::events::BasicMessageEditedPayload {
+                message_id: message_id.to_string(),
+                new_content,
+                edited_time: edit.edited_time.clone(),
+                connection_id: connection_id.to_string(),
+            };
+            let meta = agent_events::EventMetadata::for_tenant(&self.agent_id);
+            let _ = self.event_bus.emit(&meta, payload).await;
+        }
+        #[cfg(not(feature = "events"))]
+        let _ = connection_id;
+
+        Ok((edit, updated))
+    }
+
     /// Save an incoming basic message
     ///
     /// # Arguments

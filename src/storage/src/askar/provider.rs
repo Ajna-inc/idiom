@@ -61,6 +61,30 @@ impl AskarStorageProvider {
     pub fn store(&self) -> &Arc<Store> {
         &self.store
     }
+
+    /// Re-key an existing store in place: open with the current key (from
+    /// `config.pass_key`), replace the store's wrapping key with
+    /// `new_pass_key`, and close.
+    ///
+    /// This is a standalone lifecycle operation — it must run while the store
+    /// is **not** open anywhere else (Askar's `rekey` needs exclusive access),
+    /// so it takes an owned `Store` rather than the shared `Arc<Store>` a live
+    /// provider holds. Fails if `config.pass_key` is wrong (the store won't
+    /// open) or the store is corrupt.
+    pub async fn rekey(config: AskarConfig, new_pass_key: &str) -> Result<()> {
+        let mut store = Store::open(
+            &config.database_url,
+            Some(config.key_method.into()),
+            PassKey::from(config.pass_key.as_str()),
+            config.profile.clone(),
+        )
+        .await?;
+        store
+            .rekey(config.key_method.into(), PassKey::from(new_pass_key))
+            .await?;
+        store.close().await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
