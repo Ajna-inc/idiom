@@ -10,11 +10,11 @@
 //! Wallet code calls [`DcxRuntime::new`] once at agent startup and
 //! [`DcxRuntime::register_classical_peer`] once per connection.
 
-use crate::dcx::channel::ChannelManager;
+use crate::dcx::channel::{ChannelCounterStore, ChannelManager};
 use crate::dcx::providers::classical::{ClassicalKeyMaterial, ClassicalX25519Provider};
 use crate::dcx::session::SessionKeyProvider;
 use crate::dcx::transports::{DcxInboundExtension, DcxOutboundTransport};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 
 /// Bundled DCX runtime for a wallet.
@@ -33,6 +33,10 @@ pub struct DcxRuntime {
     /// Inbound extension — hand binary WS frames to
     /// [`DcxInboundExtension::try_handle`] before treating them as text.
     pub inbound: Arc<DcxInboundExtension>,
+    /// Durable counter store (nonce/replay safety across restarts). Also
+    /// consulted by [`Self::ensure_channel`] so the proactive rebuild path
+    /// resumes counters instead of resetting them.
+    counter_store: OnceLock<Arc<dyn ChannelCounterStore>>,
 }
 
 impl DcxRuntime {
@@ -63,7 +67,19 @@ impl DcxRuntime {
             classical,
             outbound,
             inbound,
+            counter_store: OnceLock::new(),
         }
+    }
+
+    /// Attach a durable [`ChannelCounterStore`] to both transports and
+    /// the runtime, enabling cross-restart nonce/replay safety. A process
+    /// that persists DCX channels MUST call this before any DCX traffic.
+    /// Idempotent; wired through the `Arc`s so the constructor stays
+    /// backward-compatible.
+    pub fn set_counter_store(&self, store: Arc<dyn ChannelCounterStore>) {
+        let _ = self.counter_store.set(store.clone());
+        self.outbound.set_counter_store(store.clone());
+        self.inbound.set_counter_store(store);
     }
 
     /// Register a peer for classical-provider DCX.
@@ -92,12 +108,39 @@ impl DcxRuntime {
         }
         match self.classical.establish(peer_did).await {
             Ok(keys) => {
-                let channel = crate::dcx::channel::Channel::from_session_keys(
-                    &keys,
-                    peer_did.to_string(),
-                    self.classical.provider_id().to_string(),
-                    keys.is_initiator,
-                );
+                let provider_id = self.classical.provider_id().to_string();
+                // Resume persisted counters on this proactive rebuild path
+                // (after a restart) — a bare reset here under the classical
+                // provider's deterministic k_send would reuse nonces.
+                let channel = {
+                    let base = || {
+                        crate::dcx::channel::Channel::from_session_keys(
+                            &keys,
+                            peer_did.to_string(),
+                            provider_id.clone(),
+                            keys.is_initiator,
+                        )
+                    };
+                    if let Some(store) = self.counter_store.get() {
+                        let channel_id = crate::dcx::routing::derive_channel_id(
+                            &provider_id,
+                            &keys.connection_id,
+                            keys.generation,
+                        );
+                        match store.load(&channel_id).await {
+                            Some(persisted) => crate::dcx::channel::Channel::resume(
+                                &keys,
+                                peer_did.to_string(),
+                                provider_id.clone(),
+                                keys.is_initiator,
+                                persisted,
+                            ),
+                            None => base(),
+                        }
+                    } else {
+                        base()
+                    }
+                };
                 self.channels.insert(channel).await;
                 tracing::debug!(
                     target: "dcx",

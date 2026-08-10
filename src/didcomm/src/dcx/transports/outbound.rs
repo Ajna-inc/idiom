@@ -5,12 +5,12 @@
 //! peer with an active DCX channel, the message is sent as a binary
 //! frame instead of being JWE-packed and routed via HTTP / text-frame WS.
 
-use crate::dcx::channel::ChannelManager;
+use crate::dcx::channel::{ChannelCounterStore, ChannelManager, SEND_RESERVATION_BATCH};
 use crate::dcx::errors::ProviderError;
 use crate::dcx::frame::{Frame, FrameBody, FrameHeader, FRAME_TYPE_DATA, FRAME_VERSION};
 use crate::dcx::padding::{padding_length, DEFAULT_PADDING_BOUNDARY};
 use crate::dcx::session::SessionKeyProvider;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::{debug, trace};
 
@@ -30,6 +30,13 @@ pub struct DcxOutboundTransport {
     /// compatibility only.
     #[allow(dead_code)]
     is_initiator: bool,
+    /// Durable counter store for cross-restart nonce/replay safety. When
+    /// unset (the default), the transport runs WITHOUT durable send
+    /// reservation — correct only for ephemeral sessions; a process that
+    /// persists channels MUST set this via [`Self::set_counter_store`]
+    /// (settable through the `Arc` post-construction, so the runtime
+    /// constructor stays unchanged).
+    counter_store: OnceLock<Arc<dyn ChannelCounterStore>>,
 }
 
 /// Errors produced by [`DcxOutboundTransport::send_to_peer`].
@@ -59,7 +66,15 @@ impl DcxOutboundTransport {
             provider,
             binary_tx,
             is_initiator,
+            counter_store: OnceLock::new(),
         }
+    }
+
+    /// Attach a durable [`ChannelCounterStore`] for cross-restart
+    /// nonce/replay safety. Idempotent (first set wins). Callable through
+    /// an `Arc` so the runtime can wire it after construction.
+    pub fn set_counter_store(&self, store: Arc<dyn ChannelCounterStore>) {
+        let _ = self.counter_store.set(store);
     }
 
     /// Send `application_payload` to `peer_did` as a DCX `DATA` frame.
@@ -78,15 +93,45 @@ impl DcxOutboundTransport {
                 // No existing channel — drive the provider to establish.
                 trace!(target: "dcx.outbound", peer_did, "establishing new DCX channel");
                 let keys = self.provider.establish(peer_did).await?;
+                let provider_id = self.provider.provider_id().to_string();
                 // Honour the provider's per-pair initiator decision, not
                 // the runtime-wide flag — peer channels need each end to
                 // pick the opposite role for directional keys to align.
-                let channel = crate::dcx::channel::Channel::from_session_keys(
-                    &keys,
-                    peer_did.to_string(),
-                    self.provider.provider_id().to_string(),
-                    keys.is_initiator,
-                );
+                //
+                // RESTART SAFETY: if a durable store has counters for this
+                // channel_id, RESUME from them (the send counter jumps past
+                // the last reserved window) instead of resetting to 0. The
+                // classical provider derives the SAME k_send after a
+                // restart, so a bare reset here would reuse nonces.
+                let channel = {
+                    let base = || {
+                        crate::dcx::channel::Channel::from_session_keys(
+                            &keys,
+                            peer_did.to_string(),
+                            provider_id.clone(),
+                            keys.is_initiator,
+                        )
+                    };
+                    if let Some(store) = self.counter_store.get() {
+                        let channel_id = crate::dcx::routing::derive_channel_id(
+                            &provider_id,
+                            &keys.connection_id,
+                            keys.generation,
+                        );
+                        match store.load(&channel_id).await {
+                            Some(persisted) => crate::dcx::channel::Channel::resume(
+                                &keys,
+                                peer_did.to_string(),
+                                provider_id.clone(),
+                                keys.is_initiator,
+                                persisted,
+                            ),
+                            None => base(),
+                        }
+                    } else {
+                        base()
+                    }
+                };
                 self.channels.insert(channel).await;
                 self.channels
                     .get_by_peer_did(peer_did)
@@ -95,8 +140,20 @@ impl DcxOutboundTransport {
             }
         };
 
-        // 2. Allocate msg_id + build frame.
+        // 2. Reserve + durably persist the send ceiling BEFORE issuing the
+        //    next msg_id, so a crash can never resume onto an id that was
+        //    already sent (nonce reuse). One store write per
+        //    SEND_RESERVATION_BATCH frames, not per frame.
         let mut channel = channel_arc.lock().await;
+        if channel.needs_send_reservation() {
+            let new_ceiling = channel.reserve_send(SEND_RESERVATION_BATCH);
+            if let Some(store) = self.counter_store.get() {
+                let cid = channel.channel_id;
+                store.save_send_reserved(&cid, new_ceiling).await;
+            }
+        }
+
+        // 3. Allocate msg_id + build frame.
         let msg_id = channel.next_send_msg_id();
         let pad_len = padding_length(application_payload.len(), DEFAULT_PADDING_BOUNDARY);
         let body = FrameBody::Data {

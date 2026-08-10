@@ -60,6 +60,14 @@ pub struct Channel {
     /// Strictly-monotonic send counter (incremented per frame sent).
     #[zeroize(skip)]
     pub msg_id_send: u64,
+    /// Highest durably-reserved outbound `msg_id` ceiling. A frame with
+    /// `msg_id >= send_reserved` MUST NOT be sent until a higher ceiling
+    /// has been persisted (see [`Channel::needs_send_reservation`] /
+    /// [`Channel::reserve_send`]). On resume the send counter is set to
+    /// this value so no previously-reserved id can be reused after a
+    /// restart — the nonce-reuse defense for deterministic providers.
+    #[zeroize(skip)]
+    pub send_reserved: u64,
     /// Last received `msg_id` (frames with `msg_id <= msg_id_recv` are rejected).
     #[zeroize(skip)]
     pub msg_id_recv: u64,
@@ -104,10 +112,58 @@ impl Channel {
             k_recv: dir.k_recv,
             auth_key: session.auth_key,
             msg_id_send: 0,
+            send_reserved: 0,
             msg_id_recv: 0,
             received_any: false,
             state: ChannelState::ActiveUnconfirmed,
         }
+    }
+
+    /// Rebuild a channel from provider keys **plus** persisted counters,
+    /// for use after a process restart. Unlike [`Self::from_session_keys`]
+    /// (which resets counters to 0), this resumes the send counter at the
+    /// durable reservation ceiling — so no `msg_id` that may already have
+    /// been used under the (deterministically-identical) `k_send` can be
+    /// reused — and restores the inbound replay high-water mark.
+    ///
+    /// The caller MUST have loaded `persisted` from a
+    /// [`super::persistence::ChannelCounterStore`]; if no persisted state
+    /// exists for a deterministic provider, the caller MUST re-establish
+    /// under a fresh generation instead of calling this (see the store's
+    /// trait docs) — resuming with reset counters is the nonce-reuse bug.
+    pub fn resume(
+        session: &SessionKeys,
+        peer_did: String,
+        provider_id: String,
+        is_initiator: bool,
+        persisted: super::persistence::PersistedCounters,
+    ) -> Self {
+        let mut ch = Self::from_session_keys(session, peer_did, provider_id, is_initiator);
+        // Jump past the entire previously-reserved window: any id in
+        // `[0, send_reserved)` might already be on the wire, so the next
+        // send MUST start at `send_reserved` (strictly monotonic; the gap
+        // is harmless).
+        ch.send_reserved = persisted.send_reserved;
+        ch.msg_id_send = persisted.send_reserved;
+        ch.msg_id_recv = persisted.msg_id_recv;
+        ch.received_any = persisted.received_any;
+        ch
+    }
+
+    /// Whether the next send would exceed the durable reservation and so
+    /// requires a fresh [`Self::reserve_send`] (persisted) before it is
+    /// safe to transmit.
+    pub fn needs_send_reservation(&self) -> bool {
+        self.msg_id_send >= self.send_reserved
+    }
+
+    /// Reserve the next `batch` outbound ids, raising the ceiling. The
+    /// returned value MUST be durably persisted (via
+    /// [`super::persistence::ChannelCounterStore::save_send_reserved`])
+    /// **before** any frame at or above the previous ceiling is sent.
+    pub fn reserve_send(&mut self, batch: u64) -> u64 {
+        self.send_reserved = self.msg_id_send.saturating_add(batch.max(1));
+        self.send_reserved
     }
 
     /// Allocate the next outbound `msg_id`, returning the value to use
@@ -161,6 +217,7 @@ impl std::fmt::Debug for Channel {
             .field("provider_id", &self.provider_id)
             .field("generation", &self.generation)
             .field("msg_id_send", &self.msg_id_send)
+            .field("send_reserved", &self.send_reserved)
             .field("msg_id_recv", &self.msg_id_recv)
             .field("state", &self.state)
             .finish()
@@ -244,6 +301,76 @@ mod tests {
         assert!(c.received_any);
         let err = c.observe_recv(0); // replay of frame 0: must reject
         assert!(matches!(err, Err(ChannelError::Replay { .. })));
+    }
+
+    #[test]
+    fn resume_prevents_nonce_reuse_across_restart() {
+        // Pre-restart: send a handful of frames under a deterministic key.
+        let s = sample_session();
+        let mut before =
+            Channel::from_session_keys(&s, "did:bob".into(), "classical-x25519/1.0".into(), true);
+        before.reserve_send(1024); // ceiling = 1024, persisted
+        let used: Vec<u64> = (0..5).map(|_| before.next_send_msg_id()).collect();
+        assert_eq!(used, vec![0, 1, 2, 3, 4]);
+
+        // Simulate a crash + rebuild: the SAME provider keys yield the SAME
+        // k_send, so resetting the counter would reuse nonces 0..4. Resume
+        // from the persisted reservation ceiling instead.
+        let persisted = super::super::persistence::PersistedCounters {
+            send_reserved: before.send_reserved, // 1024
+            msg_id_recv: 0,
+            received_any: false,
+        };
+        let mut after = Channel::resume(
+            &s,
+            "did:bob".into(),
+            "classical-x25519/1.0".into(),
+            true,
+            persisted,
+        );
+        // Same key material — the whole point of the defense.
+        assert_eq!(after.k_send, before.k_send);
+        // The next id issued after restart is strictly greater than EVERY
+        // id used before restart → no (k_send, nonce) pair can repeat.
+        let next = after.next_send_msg_id();
+        assert!(next >= persisted.send_reserved);
+        assert!(used.iter().all(|&u| next > u));
+    }
+
+    #[test]
+    fn reserve_send_raises_ceiling_and_needs_reservation_tracks_it() {
+        let s = sample_session();
+        let mut c =
+            Channel::from_session_keys(&s, "did:bob".into(), "classical-x25519/1.0".into(), true);
+        assert!(c.needs_send_reservation()); // fresh: 0 >= 0
+        assert_eq!(c.reserve_send(4), 4);
+        assert!(!c.needs_send_reservation());
+        for _ in 0..4 {
+            c.next_send_msg_id();
+        }
+        // Consumed the whole window → needs a new reservation before sending.
+        assert!(c.needs_send_reservation());
+    }
+
+    #[test]
+    fn resume_restores_recv_high_water() {
+        let s = sample_session();
+        let persisted = super::super::persistence::PersistedCounters {
+            send_reserved: 2048,
+            msg_id_recv: 99,
+            received_any: true,
+        };
+        let mut c = Channel::resume(
+            &s,
+            "did:bob".into(),
+            "classical-x25519/1.0".into(),
+            false,
+            persisted,
+        );
+        // A replay of an already-seen id is rejected after resume.
+        assert!(matches!(c.observe_recv(99), Err(ChannelError::Replay { .. })));
+        assert!(matches!(c.observe_recv(50), Err(ChannelError::Replay { .. })));
+        c.observe_recv(100).unwrap(); // strictly greater → accepted
     }
 
     #[test]

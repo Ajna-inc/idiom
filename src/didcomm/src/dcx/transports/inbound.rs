@@ -9,10 +9,10 @@
 //! - [`InboundOutcome::DcxError`] — bytes parsed as DCX but
 //!   verification failed; caller MUST drop the frame and SHOULD log
 
-use crate::dcx::channel::ChannelManager;
+use crate::dcx::channel::{ChannelCounterStore, ChannelManager};
 use crate::dcx::errors::FrameError;
 use crate::dcx::frame::{decode_and_verify, decode_header, FrameBody};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::{debug, trace, warn};
 
 /// Outcome of inspecting a binary WS frame.
@@ -47,6 +47,9 @@ pub type DcxDispatcher = Arc<
 pub struct DcxInboundExtension {
     channels: Arc<ChannelManager>,
     dispatcher: DcxDispatcher,
+    /// Durable store for the inbound replay high-water mark, so replay
+    /// protection survives a restart. Unset ⇒ in-memory only.
+    counter_store: OnceLock<Arc<dyn ChannelCounterStore>>,
 }
 
 impl DcxInboundExtension {
@@ -55,7 +58,14 @@ impl DcxInboundExtension {
         Arc::new(Self {
             channels,
             dispatcher,
+            counter_store: OnceLock::new(),
         })
+    }
+
+    /// Attach a durable [`ChannelCounterStore`] so the inbound replay
+    /// high-water mark is persisted. Idempotent; callable through `Arc`.
+    pub fn set_counter_store(&self, store: Arc<dyn ChannelCounterStore>) {
+        let _ = self.counter_store.set(store);
     }
 
     /// Try to handle `bytes` as a DCX binary frame. See [`InboundOutcome`].
@@ -125,6 +135,14 @@ impl DcxInboundExtension {
         let channel_id = header.channel_id;
         let msg_id = header.msg_id;
         drop(channel);
+
+        // Persist the inbound replay high-water mark so a restart resumes
+        // replay protection instead of resetting to 0. Recorded as a
+        // high-water max by the store, so occasional lag only widens the
+        // post-restart replay window — it can never cause nonce reuse.
+        if let Some(store) = self.counter_store.get() {
+            store.save_recv(&channel_id, msg_id).await;
+        }
 
         // Step 4: dispatch.
         let dispatcher = self.dispatcher.clone();
