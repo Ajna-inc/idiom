@@ -39,7 +39,7 @@ pub use cheqd::CheqdDidResolver;
 pub use indy::{IndyDidResolver, IndyLedgerClient};
 pub use jwk::JwkDidResolver;
 pub use key::{KeyDidCreator, KeyDidResolver};
-pub use peer::{PeerDidCreator, PeerDidResolver};
+pub use peer::{encode_did_peer4, PeerDidCreator, PeerDidResolver};
 pub use web::WebDidResolver;
 pub use x25519::{
     ed25519_private_to_x25519, ed25519_pubkey_from_did_key, ed25519_public_to_x25519,

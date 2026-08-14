@@ -253,6 +253,25 @@ fn hash_encoded_document(encoded: &str) -> String {
     multibase::encode(multibase::Base::Base58Btc, mh)
 }
 
+/// Mint a long-form numalgo-4 `did:peer:4` from serialized document bytes —
+/// the inverse of [`decode_peer4_long`]. Returns
+/// `(short_form, long_form, encoded_document)`.
+///
+/// numalgo-4 is self-certifying over the exact `document_json` bytes; this
+/// wraps them verbatim without parsing or reordering. Pass an order-preserving
+/// serialization (not a re-serialized `serde_json::Value`, which sorts keys)
+/// with credo-ts pre-encode mutations already applied by the caller.
+pub fn encode_did_peer4(document_json: &[u8]) -> (String, String, String) {
+    let mut buf = Vec::with_capacity(2 + document_json.len());
+    buf.extend_from_slice(&[0x80, 0x04]); // varint(0x0200) = JSON multicodec
+    buf.extend_from_slice(document_json);
+    let encoded = multibase::encode(multibase::Base::Base58Btc, buf);
+    let hash = hash_encoded_document(&encoded);
+    let short_form = format!("did:peer:4{hash}");
+    let long_form = format!("{short_form}:{encoded}");
+    (short_form, long_form, encoded)
+}
+
 /// Minimal unsigned-LEB128 varint reader → (value, remaining bytes).
 fn read_uvarint(data: &[u8]) -> Option<(u64, &[u8])> {
     let mut value = 0u64;
@@ -691,17 +710,59 @@ mod tests {
         assert!(!resolver.allows_caching());
     }
 
-    /// Mint a long-form numalgo-4 did:peer from a DID document — the inverse of
-    /// `decode_peer4_long`: multicodec-tag + multibase the document, then prefix
-    /// the self-certifying hash. Lets the tests generate a fresh DID rather than
-    /// pin an external fixture.
     fn make_peer4(doc: &serde_json::Value) -> String {
         let json = serde_json::to_vec(doc).unwrap();
-        let mut buf = Vec::with_capacity(2 + json.len());
-        buf.extend_from_slice(&[0x80, 0x04]); // varint(0x0200) = JSON multicodec
-        buf.extend_from_slice(&json);
-        let encoded = multibase::encode(multibase::Base::Base58Btc, buf);
-        format!("did:peer:4{}:{}", hash_encoded_document(&encoded), encoded)
+        encode_did_peer4(&json).1
+    }
+
+    /// `encode_did_peer4` must reproduce the shared cross-stack fixtures
+    /// (`plugins/pq_bridge/tests/fixtures/ephemeral_did_peer4_vectors.json`).
+    /// `document_input` is rebuilt as insertion-ordered compact JSON, not via
+    /// `serde_json::Value` (which sorts keys and would break the byte match).
+    #[test]
+    fn encode_matches_cross_stack_vectors() {
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("peer4_vectors.json")).unwrap();
+        let expected = |name: &str, field: &str| -> String {
+            vectors
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["name"] == name)
+                .unwrap_or_else(|| panic!("vector {name} missing"))[field]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+
+        let cases: [(&str, &str); 3] = [
+            (
+                "v1-kem-only",
+                r##"{"@context":["https://w3id.org/did/v1"],"keyAgreement":[{"id":"#kem-1","type":"Multikey","publicKeyMultibase":"z6MkrLcGUKHWb5T8sX9vyLcRzPmF1JzWhuKPHWvCKQpAa1zE"}]}"##,
+            ),
+            (
+                "v2-hybrid-kem",
+                r##"{"@context":["https://w3id.org/did/v1"],"keyAgreement":[{"id":"#x25519-1","type":"Multikey","publicKeyMultibase":"z6LSjcgEcvWyaY6RPK2yPxrqVPYxZ6yPq1WQXJC3RcEy67XU"},{"id":"#mlkem-1","type":"Multikey","publicKeyMultibase":"zQ3shi98LXgyTLgrqWyBgQpFb1XfDdMx4hKpFhFwUx7p1Yhsa"}]}"##,
+            ),
+            (
+                "v3-h1-full",
+                r##"{"@context":["https://w3id.org/did/v1"],"keyAgreement":[{"id":"#x25519-1","type":"Multikey","publicKeyMultibase":"z6LSjcgEcvWyaY6RPK2yPxrqVPYxZ6yPq1WQXJC3RcEy67XU"},{"id":"#mlkem-1","type":"Multikey","publicKeyMultibase":"zQ3shi98LXgyTLgrqWyBgQpFb1XfDdMx4hKpFhFwUx7p1Yhsa"}],"assertionMethod":[{"id":"#ed25519-1","type":"Multikey","publicKeyMultibase":"z6MkhCN5LDcSrkE5tk9wHJrYJk8aqXuB6L7yMxgkQAW8Ldka"},{"id":"#mldsa-1","type":"Multikey","publicKeyMultibase":"zQ3shsk6jkXyN3hKfXyrJ7PvKvVKsT7c4XzbZj9YPSWcfQHvr"}]}"##,
+            ),
+        ];
+
+        for (name, doc_json) in cases {
+            let (short, long, encoded) = encode_did_peer4(doc_json.as_bytes());
+            assert_eq!(short, expected(name, "expected_short_form"), "short {name}");
+            assert_eq!(long, expected(name, "expected_long_form"), "long {name}");
+            assert_eq!(
+                encoded,
+                expected(name, "expected_encoded_document"),
+                "encoded {name}"
+            );
+            let tail = split_peer4_long(&long).expect("long form recognised");
+            let doc = decode_peer4_long(&long, tail).expect("decodes own mint");
+            assert_eq!(doc.id, long);
+        }
     }
 
     fn sample_peer4() -> String {
