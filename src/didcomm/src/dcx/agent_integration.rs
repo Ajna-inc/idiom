@@ -37,6 +37,10 @@ pub struct DcxRuntime {
     /// consulted by [`Self::ensure_channel`] so the proactive rebuild path
     /// resumes counters instead of resetting them.
     counter_store: OnceLock<Arc<dyn ChannelCounterStore>>,
+    /// Optional stronger provider (e.g. `pq-bridge/1.0`), injected by the
+    /// consumer. When set and it has keys for a peer, channels prefer it over
+    /// classical — this is how a `KEM_BOUND` pq-bridge session upgrades DCX.
+    pq: OnceLock<Arc<dyn SessionKeyProvider>>,
 }
 
 impl DcxRuntime {
@@ -68,7 +72,15 @@ impl DcxRuntime {
             outbound,
             inbound,
             counter_store: OnceLock::new(),
+            pq: OnceLock::new(),
         }
+    }
+
+    /// Register a stronger [`SessionKeyProvider`] (e.g. `pq-bridge/1.0`). Once
+    /// set, [`Self::ensure_channel`] prefers it for any peer it has keys for,
+    /// so an established PQ session upgrades the DCX channel. Idempotent.
+    pub fn set_pq_provider(&self, provider: Arc<dyn SessionKeyProvider>) {
+        let _ = self.pq.set(provider);
     }
 
     /// Attach a durable [`ChannelCounterStore`] to both transports and
@@ -106,9 +118,15 @@ impl DcxRuntime {
         if self.channels.get_by_peer_did(peer_did).await.is_some() {
             return;
         }
-        match self.classical.establish(peer_did).await {
+        // Prefer the PQ provider when it already holds keys for this peer
+        // (a KEM_BOUND pq-bridge session); otherwise use classical.
+        let provider: Arc<dyn SessionKeyProvider> = match self.pq.get() {
+            Some(pq) if pq.get_keys(peer_did).await.is_some() => pq.clone(),
+            _ => self.classical.clone() as Arc<dyn SessionKeyProvider>,
+        };
+        match provider.establish(peer_did).await {
             Ok(keys) => {
-                let provider_id = self.classical.provider_id().to_string();
+                let provider_id = provider.provider_id().to_string();
                 // Resume persisted counters on this proactive rebuild path
                 // (after a restart) — a bare reset here under the classical
                 // provider's deterministic k_send would reuse nonces.
