@@ -368,8 +368,14 @@ mod tests {
             persisted,
         );
         // A replay of an already-seen id is rejected after resume.
-        assert!(matches!(c.observe_recv(99), Err(ChannelError::Replay { .. })));
-        assert!(matches!(c.observe_recv(50), Err(ChannelError::Replay { .. })));
+        assert!(matches!(
+            c.observe_recv(99),
+            Err(ChannelError::Replay { .. })
+        ));
+        assert!(matches!(
+            c.observe_recv(50),
+            Err(ChannelError::Replay { .. })
+        ));
         c.observe_recv(100).unwrap(); // strictly greater → accepted
     }
 

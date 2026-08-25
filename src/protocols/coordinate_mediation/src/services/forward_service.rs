@@ -58,7 +58,10 @@ fn build_delivery_frame(
 
 /// Build a single delivery `Attachment` from a queue entry's ID + its already
 /// -encrypted payload (mirrors `PickupMediatorService::process_delivery_request`).
-fn encrypted_to_attachment(message_id: &str, encrypted_message: &str) -> didcomm::core::models::Attachment {
+fn encrypted_to_attachment(
+    message_id: &str,
+    encrypted_message: &str,
+) -> didcomm::core::models::Attachment {
     use base64::Engine;
     didcomm::core::models::Attachment {
         id: Some(message_id.to_string()),
@@ -372,7 +375,10 @@ impl<Q: MessageQueueRepositoryTrait + 'static> ForwardService<Q> {
             let frame = match build_delivery_frame(&batch.id, batch.attachments.clone()) {
                 Some(f) => f,
                 None => {
-                    tracing::warn!(connection_id, "flush: could not build delivery frame; stopping");
+                    tracing::warn!(
+                        connection_id,
+                        "flush: could not build delivery frame; stopping"
+                    );
                     return Ok(delivered);
                 }
             };

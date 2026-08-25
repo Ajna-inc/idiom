@@ -121,7 +121,10 @@ impl BasicMessageService {
         message_id: &str,
         new_content: String,
         connection_id: &str,
-    ) -> Result<(crate::messages::edit_message::EditMessage, BasicMessageRecord)> {
+    ) -> Result<(
+        crate::messages::edit_message::EditMessage,
+        BasicMessageRecord,
+    )> {
         use crate::messages::edit_message::EditMessage;
 
         let original = self
@@ -129,9 +132,7 @@ impl BasicMessageService {
             .find_by_id(message_id)
             .await?
             .ok_or_else(|| {
-                BasicMessageServiceError::InvalidMessage(format!(
-                    "message not found: {message_id}"
-                ))
+                BasicMessageServiceError::InvalidMessage(format!("message not found: {message_id}"))
             })?;
 
         let edit = EditMessage::new(message_id, new_content.clone());
