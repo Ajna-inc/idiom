@@ -185,9 +185,10 @@ impl SdJwtVerifier {
             }
         }
 
-        // Fallback: if no DID verifier or issuer is not a DID, return true
-        // (backwards compatibility with existing tests)
-        Ok(true)
+        // Unsupported issuers and missing trust configuration are not a
+        // successful verification result. Callers must construct the service
+        // with a resolver that can authenticate the issuer's assertion key.
+        Ok(false)
     }
 
     /// Parse JWT claims

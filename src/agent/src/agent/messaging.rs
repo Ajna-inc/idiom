@@ -369,6 +369,24 @@ impl Agent {
     ) -> didcomm::transports::Result<Option<String>> {
         trace!("Processing HTTP inbound message");
 
+        // HTTP protocol dispatch is never a plaintext trust boundary. Both
+        // DIDComm v1 and v2 encrypted envelopes carry these JWE members; a
+        // bare message must not reach handlers where its body `from` could be
+        // mistaken for an authenticated principal.
+        let is_encrypted_envelope = serde_json::from_str::<serde_json::Value>(&packed_message)
+            .ok()
+            .is_some_and(|value| {
+                value.get("protected").and_then(|v| v.as_str()).is_some()
+                    && value.get("iv").and_then(|v| v.as_str()).is_some()
+                    && value.get("ciphertext").and_then(|v| v.as_str()).is_some()
+                    && value.get("tag").and_then(|v| v.as_str()).is_some()
+            });
+        if !is_encrypted_envelope {
+            return Err(didcomm::transports::TransportError::ProcessingFailed(
+                "Plaintext DIDComm is not accepted on encrypted HTTP ingress".to_string(),
+            ));
+        }
+
         // Event waiter removed — was adding 50ms latency per connection message.
         // The handler emits state_changed events synchronously; no async wait needed.
         let event_waiter = tokio::spawn(async move { None::<agent_events::Event> });
@@ -393,6 +411,11 @@ impl Agent {
         // Extract both plaintext message and sender DID from unpack metadata
         let (plaintext_message, sender_did) = match unpack_result {
             Ok((message, metadata)) => {
+                if !metadata.encrypted {
+                    return Err(didcomm::transports::TransportError::ProcessingFailed(
+                        "DIDComm unpack did not produce an encrypted envelope".to_string(),
+                    ));
+                }
                 tracing::debug!(
                     "[PROCESS-HTTP] Unpacked: type={}, id={}, from={:?}",
                     message.msg_type,

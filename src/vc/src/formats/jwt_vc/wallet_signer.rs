@@ -107,20 +107,44 @@ impl WalletJwtSigner {
         // Decode header and payload
         let header_bytes = URL_SAFE_NO_PAD.decode(parts[0])?;
         let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1])?;
-        let _signature_bytes = URL_SAFE_NO_PAD.decode(parts[2])?;
+        let signature_bytes = URL_SAFE_NO_PAD.decode(parts[2])?;
 
         let header: Value = serde_json::from_slice(&header_bytes)?;
         let payload: Value = serde_json::from_slice(&payload_bytes)?;
 
-        // Create signing input
-        let _signing_input = format!("{}.{}", parts[0], parts[1]);
+        let kid = header
+            .get("kid")
+            .and_then(Value::as_str)
+            .ok_or("Missing 'kid' in JWT header")?;
+        let alg = header
+            .get("alg")
+            .and_then(Value::as_str)
+            .ok_or("Missing 'alg' in JWT header")?;
+        let key = self
+            .wallet
+            .get_key(kid)
+            .await?
+            .ok_or_else(|| format!("Key not found: {kid}"))?;
+        let expected_alg = match key.key_type {
+            AgentKeyType::Ed25519 => "EdDSA",
+            AgentKeyType::EcdsaSecp256r1 | AgentKeyType::P256 => "ES256",
+            other => return Err(format!("Unsupported JWT verification key type: {other:?}").into()),
+        };
+        if alg != expected_alg {
+            return Err(format!(
+                "Algorithm mismatch: header has {alg}, key requires {expected_alg}"
+            )
+            .into());
+        }
 
-        // Verify signature using the wallet's verify method
-        // Note: This is a simplified approach - in production, you'd need to handle
-        // key resolution and algorithm validation more carefully
-
-        // For now, we'll skip verification in parsing and leave it to the caller
-        // A full implementation would verify here
+        let signing_input = format!("{}.{}", parts[0], parts[1]);
+        if !self
+            .wallet
+            .verify(kid, signing_input.as_bytes(), &signature_bytes)
+            .await?
+        {
+            return Err("Invalid JWT signature".into());
+        }
 
         Ok((header, payload))
     }
@@ -270,11 +294,11 @@ impl WalletBackedJwtVcService {
             .ok_or("Missing 'kid' in JWT header")?;
 
         // Resolve public key
-        let public_key = if let Some(_registry) = &self.did_registry {
-            // Try to resolve via DID registry
-            // This is a placeholder - actual implementation would resolve the DID document
-            // and extract the verification method
-            vec![] // TODO: Implement DID resolution
+        let public_key = if self.did_registry.is_some() {
+            // A registry-backed verifier must resolve and authorize the exact
+            // issuer assertion key. Until that is implemented, fail closed
+            // instead of parsing an unverified token.
+            return Err("DID-registry JWT key resolution is not implemented".into());
         } else {
             // Try to get from wallet
             if let Some(key) = self.wallet.get_key(kid).await? {

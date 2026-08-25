@@ -308,7 +308,7 @@ impl MessageEncryption {
                     })?;
 
                 // Unpack using DIDComm v1
-                let (message, metadata) =
+                let (message, _metadata) =
                     didcomm::v1::unpack_message(&encrypted, self.wallet_provider.clone())
                         .await
                         .map_err(|e| {
@@ -316,53 +316,6 @@ impl MessageEncryption {
                         })?;
 
                 tracing::debug!("[DIDComm v1] Decrypted successfully");
-
-                // Log decrypted message to file for debugging
-                if let Ok(mut log_file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/mediation_e2e.log")
-                {
-                    use std::io::Write;
-                    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
-                    let msg_type = message
-                        .get("@type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let msg_id = message
-                        .get("@id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let _ = writeln!(
-                        log_file,
-                        "[{}] [DECRYPT] === MESSAGE DECRYPTED ===",
-                        timestamp
-                    );
-                    let _ = writeln!(
-                        log_file,
-                        "[{}] [DECRYPT] Message type: {}",
-                        timestamp, msg_type
-                    );
-                    let _ = writeln!(log_file, "[{}] [DECRYPT] Message ID: {}", timestamp, msg_id);
-                    let _ = writeln!(
-                        log_file,
-                        "[{}] [DECRYPT] Sender key: {:?}",
-                        timestamp, metadata.sender_key
-                    );
-                    let _ = writeln!(
-                        log_file,
-                        "[{}] [DECRYPT] Recipient key: {:?}",
-                        timestamp, metadata.recipient_key
-                    );
-                    // Log full decrypted message (prettified)
-                    if let Ok(pretty) = serde_json::to_string_pretty(&message) {
-                        let _ = writeln!(
-                            log_file,
-                            "[{}] [DECRYPT] Full decrypted message:\n{}",
-                            timestamp, pretty
-                        );
-                    }
-                }
 
                 // Serialize decrypted message back to JSON
                 serde_json::to_string(&message).map_err(|e| {

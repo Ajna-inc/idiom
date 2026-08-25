@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use didcomm::core::Message;
 use didcomm::messaging::handlers::{
     InboundMessage, MessageHandler, MessageHandlerError, OutboundMessage,
@@ -32,6 +33,27 @@ impl SigningProtocolHandler {
     /// Get the coordinator
     pub fn coordinator(&self) -> &SigningCoordinator {
         &self.coordinator
+    }
+
+    fn require_claimed_sender<'a>(
+        &self,
+        inbound: &'a InboundMessage,
+        claimed_did: &str,
+    ) -> Result<&'a str> {
+        if !inbound.context.authenticated {
+            return Err(SigningProtocolError::Unauthorized(
+                "signing protocol requires authcrypt".to_string(),
+            ));
+        }
+        let sender = inbound.context.from.as_deref().ok_or_else(|| {
+            SigningProtocolError::Unauthorized("authenticated sender is missing".to_string())
+        })?;
+        if sender != claimed_did {
+            return Err(SigningProtocolError::Unauthorized(format!(
+                "claimed signer {claimed_did} does not match authenticated sender {sender}"
+            )));
+        }
+        Ok(sender)
     }
 
     // ========================================================================
@@ -160,6 +182,18 @@ impl SigningProtocolHandler {
 
     async fn handle_consent(&self, inbound: &InboundMessage) -> Result<Option<Message>> {
         let body: Consent = serde_json::from_value(inbound.message.body.clone())?;
+        self.require_claimed_sender(inbound, &body.signer_did)?;
+        if body.key_binding.controller != body.signer_did {
+            return Err(SigningProtocolError::Unauthorized(
+                "key binding controller does not match signer".to_string(),
+            ));
+        }
+        let session = self.coordinator.require_session(&body.session_id).await?;
+        if body.accepted_suite.id != session.suite.id {
+            return Err(SigningProtocolError::SignatureError(
+                "accepted suite does not match signing session".to_string(),
+            ));
+        }
 
         info!(session_id = %body.session_id, signer = %body.signer_did, "Received consent");
 
@@ -184,6 +218,34 @@ impl SigningProtocolHandler {
 
     async fn handle_partial_signature(&self, inbound: &InboundMessage) -> Result<Option<Message>> {
         let body: PartialSignature = serde_json::from_value(inbound.message.body.clone())?;
+        self.require_claimed_sender(inbound, &body.signer_did)?;
+        let session = self.coordinator.require_session(&body.session_id).await?;
+        if body.suite.id != session.suite.id || body.object_digest != session.object.digest.value {
+            return Err(SigningProtocolError::SignatureError(
+                "partial signature is not bound to this suite and object".to_string(),
+            ));
+        }
+        let expected_index = session
+            .participants
+            .iter()
+            .position(|participant| participant.did == body.signer_did)
+            .map(|index| index as u32 + 1)
+            .ok_or_else(|| SigningProtocolError::UnknownSigner(body.signer_did.clone()))?;
+        if body.signer_index != expected_index {
+            return Err(SigningProtocolError::SignatureError(
+                "partial signature signer index does not match participant".to_string(),
+            ));
+        }
+        let signature_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&body.signature)
+            .map_err(|_| {
+                SigningProtocolError::SignatureError("invalid signature encoding".to_string())
+            })?;
+        if signature_bytes.is_empty() {
+            return Err(SigningProtocolError::SignatureError(
+                "empty partial signature".to_string(),
+            ));
+        }
 
         info!(session_id = %body.session_id, signer = %body.signer_did, "Received partial-signature");
 
@@ -278,25 +340,13 @@ impl SigningProtocolHandler {
 
         info!(session_id = %body.session_id, "Received authorization token");
 
-        // Verify and accept the counter
-        let token = &body.token.token;
-        self.coordinator
-            .counter_manager()
-            .accept(self.coordinator.our_did(), &token.device, token.ctr)
-            .await?;
-
-        // Application layer should store the token and use it to unlock resources
-
-        let ack_body = Ack {
-            session_id: body.session_id,
-            status: "OK".to_string(),
-        };
-
-        Ok(Some(self.create_response(
-            &inbound.message,
-            PIURI_ACK,
-            &ack_body,
-        )?))
+        // The token is designed for detached use, so authcrypt transport alone
+        // is not a substitute for verifying `body.token.sig`. No verifier is
+        // currently injected into this handler; fail closed before consuming
+        // the replay counter rather than accepting arbitrary signature text.
+        Err(SigningProtocolError::TokenVerificationFailed(
+            "authorization-token signature verifier is not configured".to_string(),
+        ))
     }
 
     async fn handle_ack(&self, inbound: &InboundMessage) -> Result<Option<Message>> {
@@ -399,6 +449,12 @@ impl MessageHandler for SigningProtocolHandler {
         let connection_id = inbound.context.connection_id.clone();
 
         debug!(msg_type = %msg_type, "Handling signing protocol message");
+
+        if !inbound.context.authenticated || inbound.context.from.is_none() {
+            return Err(MessageHandlerError::ProcessingFailed(
+                "signing protocol requires an authenticated sender".to_string(),
+            ));
+        }
 
         let result = match msg_type.as_str() {
             PIURI_PROPOSE_SIGNING => self.handle_propose_signing(&inbound).await,

@@ -64,18 +64,11 @@ pub async fn unpack_message_with_kem(
 
     // 6. Decrypt sender if authcrypt
     let sender_key = if alg == PackAlgorithm::Authcrypt {
-        match decrypt_sender(&recipient, &our_x25519, &our_key).await {
-            Ok(sender) => Some(sender),
-            Err(e) => {
-                tracing::warn!("Failed to decrypt sender field: {}", e);
-                tracing::warn!(
-                    "Continuing without sender verification (Aries TS 0.5 compatibility issue)"
-                );
-                // For now, use a placeholder to continue testing
-                // TODO: Fix sender decryption for legacy v1 0.5 messages
-                Some("SENDER_DECRYPTION_FAILED".to_string())
-            }
-        }
+        // Authcrypt is a security boundary: if the sender cannot be
+        // authenticated, the envelope must not be processed as anoncrypt.
+        // Compatibility fallbacks here turn an attacker-controlled `alg`
+        // header into a false `authenticated = true` result.
+        Some(decrypt_sender(&recipient, &our_x25519, &our_key).await?)
     } else {
         None
     };
@@ -360,74 +353,6 @@ async fn decrypt_cek(
     // Check if this is authcrypt (has sender) or anoncrypt (no sender)
     if let Some(sender_base58) = sender_key_base58 {
         // AUTHCRYPT: Decrypt CEK using crypto_box_open with sender's public key and IV
-
-        // Check if sender decryption failed (temporary workaround for legacy v1 0.5)
-        if sender_base58 == "SENDER_DECRYPTION_FAILED" {
-            tracing::warn!("Trying to extract ephemeral key from sender field for CEK decryption");
-
-            // Try to extract the ephemeral public key from the encrypted sender field
-            if let Some(encrypted_sender_b64) = &recipient.header.sender {
-                let encrypted_sender_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(encrypted_sender_b64)
-                    .map_err(DIDCommV1Error::Base64Decode)?;
-
-                if encrypted_sender_bytes.len() >= 32 {
-                    // The first 32 bytes should be the ephemeral public key
-                    let ephemeral_public = &encrypted_sender_bytes[..32];
-
-                    // Try to use this ephemeral key for CEK decryption with crypto_box_open
-                    use aries_askar::kms::{crypto_box_open, KeyAlg, LocalKey};
-
-                    // Create a public key from the ephemeral bytes
-                    let ephemeral_x25519 =
-                        LocalKey::from_public_bytes(KeyAlg::X25519, ephemeral_public).map_err(
-                            |e| {
-                                DIDCommV1Error::Crypto(format!(
-                                    "Failed to create ephemeral X25519 key: {}",
-                                    e
-                                ))
-                            },
-                        )?;
-
-                    // Get IV for authcrypt
-                    let iv = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .decode(recipient.header.iv.as_ref().ok_or_else(|| {
-                            DIDCommV1Error::DecryptionFailed(
-                                "IV missing for authcrypt CEK decryption".to_string(),
-                            )
-                        })?)
-                        .map_err(DIDCommV1Error::Base64Decode)?;
-
-                    if iv.len() != 24 {
-                        tracing::warn!("IV length is {}, expected 24", iv.len());
-                    }
-
-                    // Try to decrypt CEK using the ephemeral public key
-                    match crypto_box_open(our_x25519, &ephemeral_x25519, &encrypted_key, &iv) {
-                        Ok(cek) => {
-                            tracing::debug!(
-                                "Successfully decrypted CEK using ephemeral key from sender field"
-                            );
-                            return Ok(cek.to_vec());
-                        }
-                        Err(e) => {
-                            tracing::debug!("Failed to decrypt CEK with ephemeral key: {}", e);
-                        }
-                    }
-                }
-            }
-
-            // Final fallback: try anoncrypt
-            tracing::warn!("Final fallback to anoncrypt for CEK decryption");
-            use aries_askar::kms::crypto_box_seal_open;
-            let cek = crypto_box_seal_open(our_x25519, &encrypted_key).map_err(|e| {
-                DIDCommV1Error::DecryptionFailed(format!(
-                    "Failed to decrypt CEK (fallback anoncrypt): {}",
-                    e
-                ))
-            })?;
-            return Ok(cek.to_vec());
-        }
 
         // Decode IV from base64url (required for authcrypt)
         let iv = base64::engine::general_purpose::URL_SAFE_NO_PAD
