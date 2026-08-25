@@ -7,7 +7,7 @@ use crate::{
     KeylistRepositoryTrait, MediationError, MediationRepositoryTrait, MediationState, Result,
     MAX_FORWARDED_MESSAGE_SIZE_BYTES,
 };
-use protocol_pickup::{MessageQueueRepositoryTrait, PickupMediatorService};
+use protocol_pickup::{MessageDeliveryMessage, MessageQueueRepositoryTrait, PickupMediatorService};
 use protocol_push_notifications::PushNotifier;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +30,49 @@ const LIVE_PUSH_TIMEOUT: Duration = Duration::from_millis(500);
 /// Matches the typical pickup batch size; larger batches still work because
 /// the live channel applies its own backpressure via `LIVE_PUSH_TIMEOUT`.
 const RECONNECT_REPLAY_BATCH: u32 = 50;
+
+/// Wrap queued message(s) as a `messagepickup/2.0/delivery` DIDComm message
+/// (serialized JSON), each attachment carrying its queue-entry ID.
+///
+/// This is what makes a live / reconnect push **ACK-able**. The recipient's
+/// pickup dispatch reads the attachment IDs and returns a `messages-received`
+/// ACK, which removes the entries from the queue. Previously the live push
+/// sent the RAW encrypted message with NO ID, so the recipient could never ACK
+/// it — the queue row stayed `Pending` forever and was re-pushed on every
+/// reconnect (the amplification / backlog storm). The client already routes a
+/// `delivery` frame through its ACK path (`dispatch_frame` →
+/// `ack_and_route_delivery`), so no client change is needed.
+fn build_delivery_frame(
+    delivery_id: &str,
+    attachments: Vec<didcomm::core::models::Attachment>,
+) -> Option<String> {
+    let mut builder = didcomm::core::MessageBuilder::new(MessageDeliveryMessage::TYPE)
+        .id(delivery_id.to_string())
+        .body(serde_json::json!({}))
+        .thread(delivery_id.to_string());
+    for att in attachments {
+        builder = builder.add_attachment(att);
+    }
+    serde_json::to_string(&builder.build()).ok()
+}
+
+/// Build a single delivery `Attachment` from a queue entry's ID + its already
+/// -encrypted payload (mirrors `PickupMediatorService::process_delivery_request`).
+fn encrypted_to_attachment(message_id: &str, encrypted_message: &str) -> didcomm::core::models::Attachment {
+    use base64::Engine;
+    didcomm::core::models::Attachment {
+        id: Some(message_id.to_string()),
+        description: None,
+        filename: None,
+        media_type: Some("application/didcomm-encrypted+json".to_string()),
+        format: None,
+        lastmod_time: None,
+        byte_count: Some(encrypted_message.len()),
+        data: didcomm::core::models::AttachmentData::Base64 {
+            base64: base64::engine::general_purpose::STANDARD.encode(encrypted_message.as_bytes()),
+        },
+    }
+}
 
 /// Strategy for how forwarded messages are handled
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -252,21 +295,32 @@ impl<Q: MessageQueueRepositoryTrait + 'static> ForwardService<Q> {
         if self.strategy == ForwardingStrategy::QueueAndLiveDelivery
             && self.live_sessions.has_session(connection_id).await
         {
-            match self
-                .live_sessions
-                .try_deliver(connection_id, encrypted_message.to_string())
-                .await
-            {
-                Ok(()) => tracing::info!(
+            // Push an ACK-able `delivery` wrapper carrying the queue ID (NOT the
+            // raw message). The client's `messages-received` ACK then removes
+            // this entry — otherwise a raw live push can never be ACKed, the row
+            // stays `Pending`, and every reconnect re-delivers it (the backlog
+            // storm). We deliberately do NOT mark the row `Sending` here: it
+            // stays `Pending` so that if this push drops-on-full, the periodic
+            // re-drain / reconnect flush still re-delivers it (also wrapped).
+            let attach = encrypted_to_attachment(&message_id, encrypted_message);
+            match build_delivery_frame(&message_id, vec![attach]) {
+                Some(frame) => match self.live_sessions.try_deliver(connection_id, frame).await {
+                    Ok(()) => tracing::info!(
+                        connection_id = connection_id,
+                        message_id = message_id,
+                        "Forward: queued + live-pushed (ACK-able delivery, +push wake)"
+                    ),
+                    Err(e) => tracing::debug!(
+                        connection_id = connection_id,
+                        message_id = message_id,
+                        error = %e,
+                        "Forward: queued; live push dropped-on-full (pickup/reconnect will cover)"
+                    ),
+                },
+                None => tracing::warn!(
                     connection_id = connection_id,
                     message_id = message_id,
-                    "Forward: queued + live-pushed (try_send, +push wake)"
-                ),
-                Err(e) => tracing::debug!(
-                    connection_id = connection_id,
-                    message_id = message_id,
-                    error = %e,
-                    "Forward: queued; live push dropped-on-full (pickup/reconnect will cover)"
+                    "Forward: could not build delivery frame; message stays queued for pickup"
                 ),
             }
         } else {
@@ -307,68 +361,37 @@ impl<Q: MessageQueueRepositoryTrait + 'static> ForwardService<Q> {
                 break;
             }
 
-            // Each attachment is a base64'd encrypted DIDComm message; wrap
-            // each one as its own outbound payload so the client receives
-            // them as the existing `delivery` flow expects. Most consumers
-            // expect a delivery envelope, but the simpler shape — send the
-            // raw encrypted_message — matches what live forwards send today
-            // (`forward_service` line: `try_deliver(conn_id, encrypted)`).
-            // We send each attachment individually for ordering clarity.
-            for attach in &batch.attachments {
-                let payload = match &attach.data {
-                    didcomm::core::models::AttachmentData::Base64 { base64 } => {
-                        use base64::Engine;
-                        match base64::engine::general_purpose::STANDARD.decode(base64) {
-                            Ok(bytes) => match String::from_utf8(bytes) {
-                                Ok(s) => s,
-                                Err(_) => {
-                                    tracing::warn!(
-                                        connection_id,
-                                        attach_id = ?attach.id,
-                                        "flush: attachment is not UTF-8, skipping"
-                                    );
-                                    continue;
-                                }
-                            },
-                            Err(e) => {
-                                tracing::warn!(
-                                    connection_id,
-                                    attach_id = ?attach.id,
-                                    error = %e,
-                                    "flush: base64 decode failed, skipping"
-                                );
-                                continue;
-                            }
-                        }
-                    }
-                    _ => {
-                        tracing::warn!(
-                            connection_id,
-                            attach_id = ?attach.id,
-                            "flush: non-base64 attachment, skipping"
-                        );
-                        continue;
-                    }
-                };
-
-                if let Err(e) = self
-                    .live_sessions
-                    .deliver_or_drop(connection_id, payload, LIVE_PUSH_TIMEOUT)
-                    .await
-                {
-                    tracing::warn!(
-                        connection_id,
-                        attach_id = ?attach.id,
-                        error = %e,
-                        "flush: live push failed, will await client status-request"
-                    );
-                    // Stop the flush — backpressure or session vanished.
+            // Push the whole batch as ONE ACK-able `delivery` frame carrying
+            // each entry's queue ID. `take_from_queue` (inside
+            // `process_delivery_request` above) already marked these `Sending`;
+            // the client's `messages-received` ACK completes their removal.
+            // Previously this unwrapped the batch to raw per-attachment pushes
+            // with NO ID, so the client couldn't ACK them and the rows leaked
+            // (re-pushed on every reconnect — the amplification storm).
+            let count = batch.attachments.len();
+            let frame = match build_delivery_frame(&batch.id, batch.attachments.clone()) {
+                Some(f) => f,
+                None => {
+                    tracing::warn!(connection_id, "flush: could not build delivery frame; stopping");
                     return Ok(delivered);
                 }
-                delivered += 1;
+            };
+            if let Err(e) = self
+                .live_sessions
+                .deliver_or_drop(connection_id, frame, LIVE_PUSH_TIMEOUT)
+                .await
+            {
+                tracing::warn!(
+                    connection_id,
+                    error = %e,
+                    "flush: live push failed, will await client status-request"
+                );
+                // Stop the flush — backpressure or session vanished.
+                return Ok(delivered);
             }
+            delivered += count;
 
-            if batch.attachments.len() < RECONNECT_REPLAY_BATCH as usize {
+            if count < RECONNECT_REPLAY_BATCH as usize {
                 break;
             }
         }
