@@ -2,6 +2,23 @@
 
 use super::*;
 
+/// Points at the agent's own DID. Every DID this agent mints — its own, per
+/// connection, per invitation — is stored with `role = Created` under
+/// `KeyPurpose::AgentDID`, so nothing in the records distinguishes the agent's
+/// own; this category holds a single record naming it.
+const AGENT_DID_POINTER_CATEGORY: &str = "AgentDidPointer";
+const AGENT_DID_POINTER_NAME: &str = "self";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct AgentDidPointer {
+    did: String,
+    key_id: String,
+    /// Endpoint the DID was minted against. did:peer:2 encodes its service
+    /// endpoint, so a config change invalidates the stored DID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    endpoint: Option<String>,
+}
+
 impl Agent {
     /// Create a new Agent with the given configuration and dependencies
     ///
@@ -646,31 +663,44 @@ impl Agent {
         // TODO: Initialize storage
         // TODO: Initialize wallet
 
-        // Create agent's own DID and store it (if auto_create_did is enabled)
+        // Reuse the agent's own DID across restarts, minting only if none
+        // survives (if auto_create_did is enabled)
         let agent_did = if self.config.did.auto_create_did {
-            tracing::info!("🔧 [Agent::initialize] Creating agent DID...");
-            let did_manager = self.dids().manager()?;
+            let endpoint = self.config.endpoints.first().cloned();
 
-            // Choose DID method based on whether we have endpoints configured
-            let (agent_did, agent_key_id) = if let Some(endpoint) = self.config.endpoints.first() {
-                // If we have an endpoint, create did:peer:2 with service endpoint
-                // This enables DID-only messaging (send_to_did) over HTTP
-                tracing::debug!("  Creating did:peer:2 with service endpoint: {}", endpoint);
-                let (did, key_id, _doc) =
-                    did_manager.create_peer_did_2_with_service(endpoint).await?;
-                (did, key_id)
+            if let Some((did, key_id)) = self.restore_agent_did(endpoint.as_deref()).await {
+                *self.agent_did.write().await = Some(did.clone());
+                *self.agent_key_id.write().await = Some(key_id);
+                tracing::info!("✓ [Agent::initialize] Agent DID restored: {}", did);
+                Some(did)
             } else {
-                // No endpoint configured, use did:key (verification only)
-                tracing::debug!("  No endpoint configured, creating did:key");
-                did_manager.create_peer_did().await?
-            };
+                tracing::info!("🔧 [Agent::initialize] Creating agent DID...");
+                let did_manager = self.dids().manager()?;
 
-            *self.agent_did.write().await = Some(agent_did.clone());
-            *self.agent_key_id.write().await = Some(agent_key_id.clone());
-            tracing::info!("✓ [Agent::initialize] Agent DID created: {}", agent_did);
-            tracing::debug!("  Agent key ID: {}", agent_key_id);
+                // Choose DID method based on whether we have endpoints configured
+                let (agent_did, agent_key_id) = if let Some(ref endpoint) = endpoint {
+                    // If we have an endpoint, create did:peer:2 with service endpoint
+                    // This enables DID-only messaging (send_to_did) over HTTP
+                    tracing::debug!("  Creating did:peer:2 with service endpoint: {}", endpoint);
+                    let (did, key_id, _doc) =
+                        did_manager.create_peer_did_2_with_service(endpoint).await?;
+                    (did, key_id)
+                } else {
+                    // No endpoint configured, use did:key (verification only)
+                    tracing::debug!("  No endpoint configured, creating did:key");
+                    did_manager.create_peer_did().await?
+                };
 
-            Some(agent_did)
+                *self.agent_did.write().await = Some(agent_did.clone());
+                *self.agent_key_id.write().await = Some(agent_key_id.clone());
+                tracing::info!("✓ [Agent::initialize] Agent DID created: {}", agent_did);
+                tracing::debug!("  Agent key ID: {}", agent_key_id);
+
+                self.save_agent_did_pointer(&agent_did, &agent_key_id, endpoint.as_deref())
+                    .await;
+
+                Some(agent_did)
+            }
         } else {
             tracing::info!(
                 "⏸️ [Agent::initialize] Skipping auto DID creation (auto_create_did=false)"
@@ -1189,6 +1219,133 @@ impl Agent {
                 }
             }
         })
+    }
+
+    /// Recover the agent's own DID from a previous session, or `None` if the
+    /// caller should mint a fresh one.
+    ///
+    /// A candidate is only adopted once its key is confirmed present in the
+    /// wallet: a DID we cannot sign for fails every outbound pack with "sender
+    /// key not found", which is worse than presenting a new identity.
+    ///
+    /// A granted mediation record wins over the pointer — its
+    /// `registered_recipient_key` is the key the mediator's keylist already
+    /// knows, and `setup_mediation` installs it as the agent DID regardless.
+    async fn restore_agent_did(&self, endpoint: Option<&str>) -> Option<(String, String)> {
+        // The registered key is a bare did:key with no DidRecord behind it, so
+        // its wallet key is found by public-key match rather than lookup.
+        if let Some(did_key) = self.granted_recipient_key().await {
+            if let Some(key_id) = self.wallet_key_for_did_key(&did_key).await {
+                tracing::info!(
+                    "[Agent::initialize] Reusing mediator-registered recipient key as agent DID"
+                );
+                return Some((did_key, key_id));
+            }
+            tracing::warn!(
+                "[Agent::initialize] Mediation grant names recipient key {} but this wallet cannot produce it",
+                did_key
+            );
+        }
+
+        let pointer = self.load_agent_did_pointer().await?;
+
+        if pointer.endpoint.as_deref() != endpoint {
+            tracing::info!(
+                "[Agent::initialize] Endpoint changed since the stored agent DID was minted \
+                 (was {:?}, now {:?}) — minting a fresh one",
+                pointer.endpoint,
+                endpoint
+            );
+            return None;
+        }
+
+        if !self.wallet_has_key(&pointer.key_id).await {
+            tracing::warn!(
+                "[Agent::initialize] Stored agent DID {} has no key in this wallet — minting a fresh one",
+                pointer.did
+            );
+            return None;
+        }
+
+        // did:key carries its key inline and is stored without a record;
+        // anything else must resolve locally or we cannot pack as it.
+        if !pointer.did.starts_with("did:key:")
+            && self.did_repository.find_by_did(&pointer.did).is_none()
+        {
+            tracing::warn!(
+                "[Agent::initialize] Stored agent DID {} has no document in the repository — minting a fresh one",
+                pointer.did
+            );
+            return None;
+        }
+
+        Some((pointer.did, pointer.key_id))
+    }
+
+    /// The recipient key a previous session registered with the mediator.
+    async fn granted_recipient_key(&self) -> Option<String> {
+        let recipient = self.mediation.as_ref()?.recipient()?;
+        recipient
+            .get_all_granted()
+            .await
+            .ok()?
+            .into_iter()
+            .find_map(|grant| grant.registered_recipient_key)
+    }
+
+    /// Whether the wallet can still produce the given key.
+    async fn wallet_has_key(&self, key_id: &str) -> bool {
+        matches!(self.wallet_provider.get_key(key_id).await, Ok(Some(_)))
+    }
+
+    /// Resolve the wallet key id behind a `did:key:z…` by public-key match.
+    async fn wallet_key_for_did_key(&self, did_key: &str) -> Option<String> {
+        let (_, multicodec) = multibase::decode(did_key.strip_prefix("did:key:")?).ok()?;
+        let public_key = multicodec.strip_prefix(&crate::modules::dids::multicodec::ED25519_PUB)?;
+        self.wallet_provider
+            .list_keys()
+            .await
+            .ok()?
+            .into_iter()
+            .find(|key| key.public_key == public_key)
+            .map(|key| key.id)
+    }
+
+    async fn load_agent_did_pointer(&self) -> Option<AgentDidPointer> {
+        let record = self
+            .storage
+            .find(AGENT_DID_POINTER_CATEGORY, AGENT_DID_POINTER_NAME)
+            .await
+            .ok()??;
+        serde_json::from_slice(&record.value).ok()
+    }
+
+    /// Record which DID the agent adopted. Best-effort: failing here costs a
+    /// rotation on the next start, not this one, so it must not abort startup.
+    async fn save_agent_did_pointer(&self, did: &str, key_id: &str, endpoint: Option<&str>) {
+        let pointer = AgentDidPointer {
+            did: did.to_string(),
+            key_id: key_id.to_string(),
+            endpoint: endpoint.map(str::to_string),
+        };
+        let value = match serde_json::to_vec(&pointer) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("[Agent::initialize] Serialize agent DID pointer: {}", e);
+                return;
+            }
+        };
+        let record = agent_core::traits::Record::new(
+            AGENT_DID_POINTER_CATEGORY,
+            AGENT_DID_POINTER_NAME,
+            value,
+        );
+        // Every start after the first already has a pointer stored.
+        if self.storage.save(&record).await.is_err() {
+            if let Err(e) = self.storage.update(&record).await {
+                tracing::warn!("[Agent::initialize] Persist agent DID pointer: {}", e);
+            }
+        }
     }
 
     /// Load persisted DID records from storage into the in-memory repository
