@@ -61,6 +61,7 @@ fn inbound(msg_type: &str, body: serde_json::Value) -> InboundMessage {
             encrypted: true,
             authenticated: true,
             sender_endpoint: None,
+            raw_plaintext: None,
         },
     }
 }

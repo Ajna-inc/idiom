@@ -1422,6 +1422,7 @@ mod tests_disabled {
                 encrypted: true,
                 authenticated: true,
                 sender_endpoint: Some("channel://requester".to_string()),
+                raw_plaintext: None,
             },
         }
     }

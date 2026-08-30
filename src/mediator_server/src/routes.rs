@@ -199,6 +199,7 @@ async fn handle_didcomm_message(
             encrypted: is_encrypted,
             authenticated: is_authenticated,
             sender_endpoint: None,
+            raw_plaintext: None,
         },
     };
 

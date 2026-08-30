@@ -58,6 +58,7 @@ impl MessageDispatcher {
             encrypted: metadata.encrypted,
             authenticated: metadata.authenticated,
             sender_endpoint: None, // Will be set by transport layer if needed
+            raw_plaintext: metadata.raw_plaintext,
         };
 
         // Create inbound message

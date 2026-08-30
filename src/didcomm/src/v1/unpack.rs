@@ -87,11 +87,14 @@ pub async fn unpack_message_with_kem(
     tracing::debug!("Successfully unpacked DIDComm v1 message");
 
     // 10. Create metadata
+    let raw_plaintext = String::from_utf8(plaintext)
+        .map_err(|e| DIDCommV1Error::DecryptionFailed(format!("Plaintext not UTF-8: {}", e)))?;
     let metadata = UnpackMetadata {
         recipient_key: recipient.header.kid.clone(),
         sender_key,
         authenticated: alg == PackAlgorithm::Authcrypt,
         anonymous: alg == PackAlgorithm::Anoncrypt,
+        raw_plaintext,
     };
 
     Ok((message, metadata))

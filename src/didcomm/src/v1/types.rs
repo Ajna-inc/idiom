@@ -124,6 +124,10 @@ pub struct UnpackMetadata {
 
     /// Whether the message was anonymous
     pub anonymous: bool,
+
+    /// The exact decrypted plaintext as it came off the wire, before any
+    /// parsing or v1→v2 normalization. Byte-faithful except for being UTF-8.
+    pub raw_plaintext: String,
 }
 
 #[cfg(test)]

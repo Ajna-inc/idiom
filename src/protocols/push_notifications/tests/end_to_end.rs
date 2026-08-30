@@ -51,6 +51,7 @@ fn inbound_set(conn: &str, token: &str, platform: &str) -> InboundMessage {
             encrypted: true,
             authenticated: true,
             sender_endpoint: None,
+            raw_plaintext: None,
         },
     }
 }

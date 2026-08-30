@@ -308,7 +308,7 @@ impl MessageEncryption {
                     })?;
 
                 // Unpack using DIDComm v1
-                let (message, _metadata) =
+                let (_message, metadata) =
                     didcomm::v1::unpack_message(&encrypted, self.wallet_provider.clone())
                         .await
                         .map_err(|e| {
@@ -317,10 +317,9 @@ impl MessageEncryption {
 
                 tracing::debug!("[DIDComm v1] Decrypted successfully");
 
-                // Serialize decrypted message back to JSON
-                serde_json::to_string(&message).map_err(|e| {
-                    AgentError::Transport(format!("Failed to serialize decrypted message: {}", e))
-                })
+                // Return the decrypted plaintext byte-for-byte as it came off
+                // the wire (re-serializing the parsed map would reorder keys)
+                Ok(metadata.raw_plaintext)
             } else {
                 // ECDH-1PU+A256KW is DIDComm v2 - V1 fallback cannot handle it
                 Err(AgentError::Transport(format!(
@@ -427,5 +426,92 @@ impl MessageEncryption {
 
         // Resolve key ID from DID via KeyExtractor (handles did:key, did:peer, etc.)
         key_extractor.find_key_for_did(sender_did).await
+    }
+}
+
+#[cfg(test)]
+mod raw_plaintext_tests {
+    use crate::test_utils::InMemoryWallet;
+    use agent_core::traits::{KeyPurpose, KeyType, WalletProvider};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// The decrypted v1 wire plaintext must survive unpack byte-for-byte in
+    /// `UnpackMetadata::raw_plaintext`, decorators intact. The normalized
+    /// `Message` alone is lossy (`@type`→`type`, synthesized `body`,
+    /// `~attach`→`attachments`), which breaks controllers that forward the
+    /// message to a wire-faithful consumer (e.g. Credo).
+    #[tokio::test]
+    async fn v1_unpack_preserves_raw_wire_plaintext() {
+        let wallet: Arc<dyn WalletProvider> = Arc::new(InMemoryWallet::new());
+        let sender = wallet
+            .create_key(KeyType::Ed25519, KeyPurpose::AgentMessaging)
+            .await
+            .unwrap();
+        let recipient = wallet
+            .create_key(KeyType::Ed25519, KeyPurpose::AgentMessaging)
+            .await
+            .unwrap();
+
+        // Aries convention: kid is the recipient Ed25519 verkey; the CEK is
+        // wrapped for its X25519 conversion.
+        let recipient_kid = bs58::encode(&recipient.public_key).into_string();
+        let recipient_x25519 = aries_askar::kms::LocalKey::from_public_bytes(
+            aries_askar::kms::KeyAlg::Ed25519,
+            &recipient.public_key,
+        )
+        .unwrap()
+        .convert_key(aries_askar::kms::KeyAlg::X25519)
+        .unwrap()
+        .to_public_bytes()
+        .unwrap();
+        let recipient_enc = bs58::encode(recipient_x25519.as_ref()).into_string();
+
+        let original = serde_json::json!({
+            "@type": "https://didcomm.org/basicmessage/1.0/message",
+            "@id": "raw-fidelity-1",
+            "~thread": { "thid": "thread-42", "sender_order": 1 },
+            "~transport": { "return_route": "all" },
+            "~attach": [{
+                "@id": "att-1",
+                "mime-type": "application/json",
+                "data": { "base64": "eyJrIjoidiJ9" }
+            }],
+            "content": "hello",
+            "sent_time": "2026-08-27T00:00:00Z",
+        });
+        let message: HashMap<String, serde_json::Value> =
+            serde_json::from_value(original.clone()).unwrap();
+
+        let encrypted = didcomm::v1::pack_message(
+            &message,
+            &[(recipient_kid, recipient_enc)],
+            Some(&sender.id),
+            wallet.clone(),
+        )
+        .await
+        .unwrap();
+
+        let (_normalized, metadata) = didcomm::v1::unpack_message(&encrypted, wallet.clone())
+            .await
+            .unwrap();
+
+        // Semantically identical to what was packed…
+        let raw: serde_json::Value = serde_json::from_str(&metadata.raw_plaintext).unwrap();
+        assert_eq!(raw, original);
+        // …and the v1 wire keys survive verbatim (normalization renames these)
+        for key in [
+            "\"@type\"",
+            "\"@id\"",
+            "\"~thread\"",
+            "\"~transport\"",
+            "\"~attach\"",
+        ] {
+            assert!(
+                metadata.raw_plaintext.contains(key),
+                "raw plaintext lost {key}"
+            );
+        }
+        assert!(metadata.authenticated);
     }
 }

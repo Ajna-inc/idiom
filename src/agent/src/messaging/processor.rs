@@ -91,6 +91,21 @@ impl MessageProcessor {
         sender_endpoint: Option<String>,
         sender_did: Option<String>,
     ) -> Result<Option<String>> {
+        self.process_message_with_raw(message_json, sender_endpoint, sender_did, None)
+            .await
+    }
+
+    /// Same as [`process_message`](Self::process_message), but also carries the
+    /// exact decrypted plaintext before any v1→v2 normalization so handlers
+    /// that forward messages (e.g. to an external controller) stay wire-faithful.
+    /// When `raw_plaintext` is `None`, `message_json` is used as the raw form.
+    pub async fn process_message_with_raw(
+        &self,
+        message_json: &str,
+        sender_endpoint: Option<String>,
+        sender_did: Option<String>,
+        raw_plaintext: Option<String>,
+    ) -> Result<Option<String>> {
         // Parse to get message type
         let message: serde_json::Value = serde_json::from_str(message_json)
             .map_err(|e| AgentError::Transport(format!("Failed to parse message: {}", e)))?;
@@ -201,6 +216,9 @@ impl MessageProcessor {
             .with_to(our_did)
             .with_connection_id(connection_id)
             .with_sender_endpoint(sender_endpoint)
+            .with_raw_plaintext(Some(
+                raw_plaintext.unwrap_or_else(|| message_json.to_string()),
+            ))
             .build();
 
         match context.from.as_ref() {

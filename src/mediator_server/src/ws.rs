@@ -485,6 +485,7 @@ async fn handle_ws_connection(socket: WebSocket, app: Arc<MediatorApp>) {
                         encrypted: is_encrypted,
                         authenticated: is_authenticated,
                         sender_endpoint: None,
+                        raw_plaintext: None,
                     },
                 };
 

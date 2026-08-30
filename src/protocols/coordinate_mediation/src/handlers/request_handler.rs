@@ -139,6 +139,7 @@ mod tests {
                 encrypted: true,
                 authenticated: true,
                 sender_endpoint: None,
+                raw_plaintext: None,
             },
         };
 
@@ -174,6 +175,7 @@ mod tests {
                 encrypted: true,
                 authenticated: true,
                 sender_endpoint: None,
+                raw_plaintext: None,
             },
         };
 

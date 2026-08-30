@@ -533,10 +533,45 @@ mod tests {
         )
     }
 
+    /// Parse an ACK-able `messagepickup/2.0/delivery` frame pushed over the
+    /// live channel: asserts the frame type and returns each attachment's
+    /// (queue-entry id, decoded payload) in order.
+    fn parse_delivery_frame(frame: &str) -> Vec<(String, String)> {
+        use base64::Engine;
+        let v: serde_json::Value = serde_json::from_str(frame).expect("frame is JSON");
+        assert_eq!(
+            v.get("type").and_then(|t| t.as_str()),
+            Some(MessageDeliveryMessage::TYPE),
+            "live push must be an ACK-able delivery frame"
+        );
+        v.get("attachments")
+            .and_then(|a| a.as_array())
+            .expect("delivery frame has attachments")
+            .iter()
+            .map(|att| {
+                let id = att
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .expect("attachment carries its queue-entry id")
+                    .to_string();
+                let b64 = att
+                    .pointer("/data/base64")
+                    .and_then(|d| d.as_str())
+                    .expect("attachment data is base64");
+                let payload = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .expect("valid base64");
+                (id, String::from_utf8(payload).expect("utf-8 payload"))
+            })
+            .collect()
+    }
+
     /// Fix 1A: even when a live WS session is active and `try_deliver`
     /// succeeds, the message MUST be queued. Previously the code path
     /// returned a fake UUID and skipped the queue, losing the message on
-    /// any WS frame drop.
+    /// any WS frame drop. The push itself is an ACK-able `delivery` frame
+    /// (not the raw ciphertext) so the client's `messages-received` ACK
+    /// can address the queue row.
     #[tokio::test]
     async fn live_delivery_also_queues() {
         let (service, pickup, live_sessions, key, conn_id) = setup_live().await;
@@ -548,12 +583,19 @@ mod tests {
             .await
             .expect("forward succeeded");
 
-        // Live channel received the push.
+        // Live channel received the push — as an ACK-able delivery frame
+        // whose attachment carries the queue-entry id + original ciphertext.
         let pushed = tokio::time::timeout(Duration::from_millis(500), rx.recv())
             .await
             .expect("live push within timeout")
             .expect("channel open");
-        assert_eq!(pushed, r#"{"e":"m1"}"#);
+        let attachments = parse_delivery_frame(&pushed);
+        assert_eq!(attachments.len(), 1, "one forward → one attachment");
+        assert_eq!(
+            attachments[0].0, mid,
+            "attachment id must be the queue-entry id so the ACK addresses a real row"
+        );
+        assert_eq!(attachments[0].1, r#"{"e":"m1"}"#);
 
         // Queue ALSO has the message — that's the bug fix.
         let pending = pickup.pending_count(&conn_id).await.unwrap();
@@ -603,15 +645,18 @@ mod tests {
 
     /// Fix 1B: messages queued while no live session exists are pushed
     /// when the client (re)registers a live session, via
-    /// `flush_queued_for_connection`.
+    /// `flush_queued_for_connection` — as ONE ACK-able `delivery` frame
+    /// batching every queued entry in order, each attachment carrying its
+    /// queue-entry id.
     #[tokio::test]
     async fn live_delivery_then_reconnect_replay() {
         let (service, pickup, live_sessions, key, conn_id) = setup_live().await;
 
         // No live session yet — three forwards land in queue only.
+        let mut mids = Vec::new();
         for i in 0..3 {
             let body = format!(r#"{{"e":"r{}"}}"#, i);
-            service.process_forward(&key, &body).await.unwrap();
+            mids.push(service.process_forward(&key, &body).await.unwrap());
         }
         assert_eq!(pickup.pending_count(&conn_id).await.unwrap(), 3);
 
@@ -622,19 +667,26 @@ mod tests {
         let delivered = service.flush_queued_for_connection(&conn_id).await.unwrap();
         assert_eq!(delivered, 3, "all queued messages should be pushed");
 
-        // All 3 land on the live channel, in order.
-        for i in 0..3 {
-            let msg = tokio::time::timeout(Duration::from_millis(500), rx.recv())
-                .await
-                .expect("push within timeout")
-                .expect("channel open");
-            assert!(
-                msg.contains(&format!("r{}", i)),
-                "expected r{} in order, got {}",
-                i,
-                msg
-            );
+        // All 3 arrive as ONE batched delivery frame, in order, each
+        // attachment id being the queue id (what makes the replay ACK-able).
+        let frame = tokio::time::timeout(Duration::from_millis(500), rx.recv())
+            .await
+            .expect("push within timeout")
+            .expect("channel open");
+        let attachments = parse_delivery_frame(&frame);
+        assert_eq!(attachments.len(), 3, "batch replays as one frame");
+        for (i, (id, payload)) in attachments.iter().enumerate() {
+            assert_eq!(id, &mids[i], "attachment ids are the queue ids, in order");
+            assert_eq!(payload, &format!(r#"{{"e":"r{}"}}"#, i));
         }
+
+        // No second frame — the whole batch went out in one delivery.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), rx.recv())
+                .await
+                .is_err(),
+            "batch must arrive as a single delivery frame"
+        );
 
         // Messages are still in queue but marked `Sending` (cleared on ACK).
         let pending = pickup.pending_count(&conn_id).await.unwrap();

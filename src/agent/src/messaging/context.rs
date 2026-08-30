@@ -14,6 +14,7 @@ pub struct MessageContextBuilder {
     encrypted: bool,
     authenticated: bool,
     sender_endpoint: Option<String>,
+    raw_plaintext: Option<String>,
 }
 
 impl MessageContextBuilder {
@@ -28,6 +29,7 @@ impl MessageContextBuilder {
             encrypted: false,
             authenticated: false,
             sender_endpoint: None,
+            raw_plaintext: None,
         }
     }
 
@@ -42,6 +44,7 @@ impl MessageContextBuilder {
             encrypted: false,     // Plaintext message
             authenticated: false, // No authentication
             sender_endpoint: None,
+            raw_plaintext: None,
         }
     }
 
@@ -56,6 +59,7 @@ impl MessageContextBuilder {
             encrypted: true,     // Was encrypted before decryption
             authenticated: true, // Authcrypt provides authentication
             sender_endpoint: None,
+            raw_plaintext: None,
         }
     }
 
@@ -107,6 +111,12 @@ impl MessageContextBuilder {
         self
     }
 
+    /// Set the raw (pre-normalization) decrypted plaintext
+    pub fn with_raw_plaintext(mut self, raw_plaintext: Option<String>) -> Self {
+        self.raw_plaintext = raw_plaintext;
+        self
+    }
+
     /// Build the MessageContext
     pub fn build(self) -> MessageContext {
         MessageContext {
@@ -118,6 +128,7 @@ impl MessageContextBuilder {
             encrypted: self.encrypted,
             authenticated: self.authenticated,
             sender_endpoint: self.sender_endpoint,
+            raw_plaintext: self.raw_plaintext,
         }
     }
 }

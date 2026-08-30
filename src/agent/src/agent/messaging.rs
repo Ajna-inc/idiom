@@ -166,7 +166,7 @@ impl didcomm::transports::MessageReceiver for Agent {
                     })?;
 
                 // Unpack using DIDComm v1
-                let (message, _metadata) =
+                let (_message, metadata) =
                     didcomm::v1::unpack_message(&encrypted, self.wallet_provider.clone())
                         .await
                         .map_err(|e| {
@@ -178,13 +178,9 @@ impl didcomm::transports::MessageReceiver for Agent {
 
                 debug!("DIDComm v1 message decrypted");
 
-                // Serialize decrypted message back to JSON
-                serde_json::to_string(&message).map_err(|e| {
-                    didcomm::transports::TransportError::ProcessingFailed(format!(
-                        "Failed to serialize decrypted message: {}",
-                        e
-                    ))
-                })?
+                // Use the decrypted plaintext byte-for-byte as it came off the
+                // wire (re-serializing the parsed map would reorder keys)
+                metadata.raw_plaintext
             } else {
                 // Use DIDComm v2 envelope service for other algorithms
                 let envelope_service = self.envelope_service.as_ref().ok_or_else(|| {
@@ -194,7 +190,7 @@ impl didcomm::transports::MessageReceiver for Agent {
                     )
                 })?;
 
-                let (message, _unpack_metadata) = envelope_service
+                let (message, unpack_metadata) = envelope_service
                     .unpack(&actual_message)
                     .await
                     .map_err(|e| {
@@ -206,12 +202,17 @@ impl didcomm::transports::MessageReceiver for Agent {
 
                 debug!("DIDComm v2 message decrypted");
 
-                serde_json::to_string(&message).map_err(|e| {
-                    didcomm::transports::TransportError::ProcessingFailed(format!(
-                        "Failed to serialize decrypted message: {}",
-                        e
-                    ))
-                })?
+                // Prefer the pre-normalization plaintext; fall back to the
+                // normalized message for unpack paths that don't carry it
+                match unpack_metadata.raw_plaintext {
+                    Some(raw) => raw,
+                    None => serde_json::to_string(&message).map_err(|e| {
+                        didcomm::transports::TransportError::ProcessingFailed(format!(
+                            "Failed to serialize decrypted message: {}",
+                            e
+                        ))
+                    })?,
+                }
             }
         } else {
             // Message is already plaintext
@@ -408,8 +409,10 @@ impl Agent {
             unpack_result.is_ok()
         );
 
-        // Extract both plaintext message and sender DID from unpack metadata
-        let (plaintext_message, sender_did) = match unpack_result {
+        // Extract plaintext message, sender DID, and the raw (pre-normalization)
+        // plaintext from unpack metadata. `raw_plaintext = None` means the
+        // plaintext string itself is already the raw wire form.
+        let (plaintext_message, sender_did, raw_plaintext) = match unpack_result {
             Ok((message, metadata)) => {
                 if !metadata.encrypted {
                     return Err(didcomm::transports::TransportError::ProcessingFailed(
@@ -482,7 +485,7 @@ impl Agent {
                         }
                     }
                 });
-                (msg_json, sender_did)
+                (msg_json, sender_did, metadata.raw_plaintext)
             }
             Err(v2_error) => {
                 trace!("V2 unpack failed, trying V1: {}", v2_error);
@@ -494,8 +497,9 @@ impl Agent {
                         format!("DIDComm decryption failed.\n  V2 error (primary): {}\n  V1 error (fallback): {}", v2_error, v1_error)
                     ))?;
 
-                // V1 fallback doesn't have sender DID in metadata
-                (msg, None)
+                // V1 fallback doesn't have sender DID in metadata; `msg` is
+                // already the raw wire form (no normalization on this path)
+                (msg, None, None)
             }
         };
 
@@ -503,7 +507,7 @@ impl Agent {
         // This happens when messages are routed through the mediation key to reach
         // a connection-specific key. The mediator delivers the outer anoncrypt JWE,
         // which when decrypted reveals a Forward containing the inner authcrypt JWE.
-        let (plaintext_message, sender_did) = {
+        let (plaintext_message, sender_did, raw_plaintext) = {
             let parsed: serde_json::Value =
                 serde_json::from_str(&plaintext_message).unwrap_or_default();
             let msg_type = parsed
@@ -555,7 +559,11 @@ impl Agent {
                                         e
                                     ))
                                 })?;
-                            (inner_json, inner_metadata.from)
+                            (
+                                inner_json,
+                                inner_metadata.from,
+                                inner_metadata.raw_plaintext,
+                            )
                         }
                         Err(v2_err) => {
                             // Try V1 fallback
@@ -564,7 +572,7 @@ impl Agent {
                                     tracing::debug!(
                                         "[FORWARD-UNWRAP] ✓ Unwrapped Forward (V1 fallback)"
                                     );
-                                    (inner_msg, None)
+                                    (inner_msg, None, None)
                                 }
                                 Err(v1_err) => {
                                     return Err(
@@ -585,7 +593,7 @@ impl Agent {
                     ));
                 }
             } else {
-                (plaintext_message, sender_did)
+                (plaintext_message, sender_did, raw_plaintext)
             }
         };
 
@@ -603,7 +611,12 @@ impl Agent {
         // Process the message with sender DID from unpack metadata
         let process_result = self
             .message_processor
-            .process_message(&plaintext_message, sender_endpoint, sender_did)
+            .process_message_with_raw(
+                &plaintext_message,
+                sender_endpoint,
+                sender_did,
+                raw_plaintext,
+            )
             .await;
 
         // (Removed: per-message blocking std::fs append of the dispatch

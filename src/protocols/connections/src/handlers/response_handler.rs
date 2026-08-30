@@ -498,6 +498,7 @@ mod tests_disabled {
                 encrypted: true,
                 authenticated: true,
                 sender_endpoint: Some("channel://responder".to_string()),
+                raw_plaintext: None,
             },
         }
     }

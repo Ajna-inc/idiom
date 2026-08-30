@@ -844,6 +844,7 @@ mod tests {
             encrypted: false,
             authenticated: false,
             sender_endpoint: None,
+            raw_plaintext: None,
         };
         didcomm::messaging::InboundMessage { message, context }
     }
@@ -988,6 +989,7 @@ mod tests {
             encrypted: false,
             authenticated: false,
             sender_endpoint: None,
+            raw_plaintext: None,
         };
 
         let inbound = didcomm::messaging::InboundMessage { message, context };

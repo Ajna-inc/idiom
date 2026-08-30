@@ -34,6 +34,15 @@ pub struct UnpackMetadata {
 
     /// Whether message was signed
     pub signed: bool,
+
+    /// The exact decrypted plaintext before any v1→v2 normalization.
+    ///
+    /// For v1 envelopes this is the wire-form Aries JSON (`@type`/`@id`,
+    /// `~thread`, `~attach`, ...) byte-for-byte as decrypted. For v2 envelopes
+    /// it is the plaintext JWM as parsed by the underlying library. Consumers
+    /// that forward messages to an external controller MUST use this instead of
+    /// re-serializing the normalized `Message`, which is lossy for v1.
+    pub raw_plaintext: Option<String>,
 }
 
 /// EnvelopeService handles packing and unpacking DIDComm messages
@@ -691,6 +700,7 @@ impl EnvelopeService {
             to: Some(v1_metadata.recipient_key),
             encrypted: true,
             signed: false,
+            raw_plaintext: Some(v1_metadata.raw_plaintext),
         };
 
         Ok((message, metadata))
@@ -774,6 +784,10 @@ impl EnvelopeService {
 
         let (didcomm_msg, unpack_metadata) = unpack_result;
 
+        // v2 plaintext as parsed by SICPA — serialization is shape-faithful for
+        // v2 (no field renames happen), unlike the v1 normalization above.
+        let raw_plaintext = serde_json::to_string(&didcomm_msg).ok();
+
         // Convert didcomm Message back to our Message
         let message = self.convert_didcomm_message(&didcomm_msg)?;
 
@@ -792,6 +806,7 @@ impl EnvelopeService {
                 .and_then(|kids| kids.first().cloned()),
             encrypted: unpack_metadata.encrypted,
             signed: unpack_metadata.non_repudiation,
+            raw_plaintext,
         };
 
         Ok((message, metadata))
@@ -908,6 +923,7 @@ mod tests {
             to: Some("did:key:bob".to_string()),
             encrypted: true,
             signed: true,
+            raw_plaintext: None,
         };
 
         assert!(metadata.authenticated);

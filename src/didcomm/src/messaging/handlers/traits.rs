@@ -65,6 +65,11 @@ pub struct MessageContext {
     /// Sender's endpoint for return routing
     /// This enables responses to be routed back to the sender's endpoint
     pub sender_endpoint: Option<String>,
+    /// The exact decrypted plaintext before any v1→v2 normalization
+    /// (see `UnpackMetadata::raw_plaintext`). Handlers that forward messages
+    /// to an external controller MUST use this instead of re-serializing
+    /// `InboundMessage::message`, which is lossy for v1 wire form.
+    pub raw_plaintext: Option<String>,
 }
 
 /// Inbound message with parsed content

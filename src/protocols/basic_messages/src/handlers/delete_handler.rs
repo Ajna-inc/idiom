@@ -300,6 +300,7 @@ mod tests {
             parent_thread_id: None,
             connection_id: None,
             sender_endpoint: None,
+            raw_plaintext: None,
         };
 
         let inbound = InboundMessage {
@@ -360,6 +361,7 @@ mod tests {
             parent_thread_id: None,
             connection_id: None,
             sender_endpoint: None,
+            raw_plaintext: None,
         };
 
         let inbound = InboundMessage {
@@ -426,6 +428,7 @@ mod tests {
             parent_thread_id: None,
             connection_id: None,
             sender_endpoint: None,
+            raw_plaintext: None,
         };
 
         let inbound = InboundMessage {
