@@ -179,8 +179,11 @@ pub fn decrypt_sender_key(
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce as AesNonce};
 use hkdf::Hkdf;
-use kem::{Decapsulate, Encapsulate};
-use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
+use ml_kem::kem::{Decapsulate, Encapsulate, Kem, KeyExport, TryKeyInit};
+use ml_kem::{
+    array::Array, DecapsulationKey768, EncapsulationKey768, ExpandedDecapsulationKey,
+    ExpandedKeyEncoding, MlKem768,
+};
 use sha2::Sha256;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519Public, StaticSecret};
 
@@ -216,14 +219,10 @@ pub fn wrap_key_hybrid(
     let recipient_public = X25519Public::from(*recipient_x25519_pk);
     let x25519_ss = eph_secret.diffie_hellman(&recipient_public);
 
-    // 2. ML-KEM-768 encapsulate
-    let pk_array: ml_kem::Encoded<<MlKem768 as KemCore>::EncapsulationKey> = recipient_kem_pk
-        .try_into()
+    // 2. ML-KEM-768 encapsulate (ml-kem 0.3: fallible parse, infallible encapsulate)
+    let ek = EncapsulationKey768::new_from_slice(recipient_kem_pk)
         .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 PK length".into()))?;
-    let ek = <MlKem768 as KemCore>::EncapsulationKey::from_bytes(&pk_array);
-    let (ct, kem_ss) = ek
-        .encapsulate(&mut aes_gcm::aead::OsRng)
-        .map_err(|e| DIDCommV1Error::Crypto(format!("ML-KEM encapsulate: {:?}", e)))?;
+    let (ct, kem_ss) = ek.encapsulate();
 
     // 3. Combine: HKDF(X25519_ss || KEM_ss) → 32-byte combined key
     let mut combined_ikm = Vec::with_capacity(64);
@@ -268,17 +267,20 @@ pub fn unwrap_key_hybrid(
     let eph_public = X25519Public::from(*x25519_eph_pk);
     let x25519_ss = our_secret.diffie_hellman(&eph_public);
 
-    // 2. ML-KEM-768 decapsulate
-    let sk_array: ml_kem::Encoded<<MlKem768 as KemCore>::DecapsulationKey> = our_kem_sk
-        .try_into()
-        .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 SK length".into()))?;
-    let dk = <MlKem768 as KemCore>::DecapsulationKey::from_bytes(&sk_array);
-    let ct_array: ml_kem::Ciphertext<MlKem768> = kem_ciphertext
-        .try_into()
-        .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 CT length".into()))?;
+    // 2. ML-KEM-768 decapsulate (ml-kem 0.3). `our_kem_sk` is the 2400-byte
+    //    EXPANDED decapsulation key — the on-disk/wire format is unchanged from
+    //    ml-kem 0.2, so existing persisted keys stay valid; we read it via the
+    //    expanded encoding (`from_expanded_bytes`) rather than the new 64-byte seed.
+    #[allow(deprecated)]
+    let dk = {
+        let sk_exp: ExpandedDecapsulationKey<MlKem768> = Array::try_from(our_kem_sk)
+            .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 SK length".into()))?;
+        DecapsulationKey768::from_expanded_bytes(&sk_exp)
+            .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 SK".into()))?
+    };
     let kem_ss = dk
-        .decapsulate(&ct_array)
-        .map_err(|e| DIDCommV1Error::Crypto(format!("ML-KEM decapsulate: {:?}", e)))?;
+        .decapsulate_slice(kem_ciphertext)
+        .map_err(|_| DIDCommV1Error::Crypto("Invalid ML-KEM-768 CT length".into()))?;
 
     // 3. Combine: same HKDF as wrapping
     let mut combined_ikm = Vec::with_capacity(64);
@@ -309,6 +311,7 @@ pub fn unwrap_key_hybrid(
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)] // to_expanded_bytes: intentional 2400-byte format preservation
     use super::*;
     use crate::v1::crypto::utils::generate_x25519_keypair;
 
@@ -388,9 +391,9 @@ mod tests {
         let x25519_pk = x25519_dalek::PublicKey::from(&x25519_sk);
 
         // Generate ML-KEM-768 keypair
-        let (dk, ek) = MlKem768::generate(&mut aes_gcm::aead::OsRng);
-        let kem_pk = ek.as_bytes().to_vec();
-        let kem_sk = dk.as_bytes().to_vec();
+        let (dk, ek) = MlKem768::generate_keypair();
+        let kem_pk = ek.to_bytes().to_vec();
+        let kem_sk = dk.to_expanded_bytes().to_vec();
         let kem_kid = "test-kid-123";
 
         // CEK to wrap
@@ -426,9 +429,9 @@ mod tests {
         let x25519_sk = x25519_dalek::StaticSecret::random_from_rng(aes_gcm::aead::OsRng);
         let x25519_pk = x25519_dalek::PublicKey::from(&x25519_sk);
 
-        let (dk, ek) = MlKem768::generate(&mut aes_gcm::aead::OsRng);
-        let kem_pk = ek.as_bytes().to_vec();
-        let kem_sk = dk.as_bytes().to_vec();
+        let (dk, ek) = MlKem768::generate_keypair();
+        let kem_pk = ek.to_bytes().to_vec();
+        let kem_sk = dk.to_expanded_bytes().to_vec();
 
         let cek = vec![7u8; 32];
         let wrapped = wrap_key_hybrid(&cek, x25519_pk.as_bytes(), &kem_pk, "kid").unwrap();
@@ -454,12 +457,12 @@ mod tests {
         let x25519_sk = x25519_dalek::StaticSecret::random_from_rng(aes_gcm::aead::OsRng);
         let x25519_pk = x25519_dalek::PublicKey::from(&x25519_sk);
 
-        let (_dk, ek) = MlKem768::generate(&mut aes_gcm::aead::OsRng);
-        let kem_pk = ek.as_bytes().to_vec();
+        let (_dk, ek) = MlKem768::generate_keypair();
+        let kem_pk = ek.to_bytes().to_vec();
 
         // Different KEM keypair for unwrap
-        let (wrong_dk, _) = MlKem768::generate(&mut aes_gcm::aead::OsRng);
-        let wrong_kem_sk = wrong_dk.as_bytes().to_vec();
+        let (wrong_dk, _) = MlKem768::generate_keypair();
+        let wrong_kem_sk = wrong_dk.to_expanded_bytes().to_vec();
 
         let cek = vec![7u8; 32];
         let wrapped = wrap_key_hybrid(&cek, x25519_pk.as_bytes(), &kem_pk, "kid").unwrap();
