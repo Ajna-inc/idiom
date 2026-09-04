@@ -147,8 +147,8 @@ openmls_basic_credential = "0.5"
 openmls_traits = "0.5"
 
 # Post-quantum cryptography (NIST FIPS 203/204)
-ml-kem = "0.2"
-kem = "=0.3.0-pre.0"
+ml-kem = { version = "0.3", features = ["getrandom"] }
+kem = "0.3"
 
 # Content encryption & tenant isolation
 aes-gcm = "0.10"
