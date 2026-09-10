@@ -179,7 +179,8 @@ pub fn decrypt_sender_key(
 
 use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit, Nonce as AesNonce};
 use hkdf::Hkdf;
-use ml_kem::kem::{Decapsulate, Encapsulate, Kem, KeyExport, TryKeyInit};
+use ml_kem::kem::{Decapsulate, Encapsulate, TryKeyInit};
+#[allow(deprecated)]
 use ml_kem::{
     array::Array, DecapsulationKey768, EncapsulationKey768, ExpandedDecapsulationKey,
     ExpandedKeyEncoding, MlKem768,
@@ -314,6 +315,8 @@ mod tests {
     #![allow(deprecated)] // to_expanded_bytes: intentional 2400-byte format preservation
     use super::*;
     use crate::v1::crypto::utils::generate_x25519_keypair;
+    use ml_kem::kem::Kem;
+    use ml_kem::KeyExport;
 
     #[test]
     fn test_wrap_unwrap_key_authcrypt() {
