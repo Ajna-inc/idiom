@@ -84,18 +84,23 @@ impl PickupRecipientService {
 
             // Extract the base64 encoded message from the attachment
             let encrypted_message = match &attachment.data {
-                didcomm::core::models::AttachmentData::Base64 { base64 } => {
-                    // Decode from base64
+                d if d.base64.is_some() => {
+                    let base64 = d.base64.as_ref().expect("checked");
                     base64::Engine::decode(&base64::engine::general_purpose::STANDARD, base64)
                         .map_err(|e| PickupError::Protocol(format!("Invalid base64: {}", e)))?
                 }
-                didcomm::core::models::AttachmentData::Json { json } => {
-                    // Already JSON, convert to bytes
+                d if d.json.is_some() => {
+                    let json = d.json.as_ref().expect("checked");
                     serde_json::to_vec(json).map_err(PickupError::Serialization)?
                 }
-                didcomm::core::models::AttachmentData::Links { .. } => {
+                d if d.is_external() => {
                     return Err(PickupError::Protocol(
                         "Link attachments not supported for message delivery".to_string(),
+                    ));
+                }
+                _ => {
+                    return Err(PickupError::Protocol(
+                        "Attachment carries no data".to_string(),
                     ));
                 }
             };
@@ -211,12 +216,10 @@ mod tests {
             format: None,
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Base64 {
-                base64: base64::Engine::encode(
-                    &base64::engine::general_purpose::STANDARD,
-                    b"test message",
-                ),
-            },
+            data: AttachmentData::base64(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"test message",
+            )),
         };
 
         let delivery_msg = MessageDeliveryMessage::new("thread-123".to_string(), vec![attachment]);

@@ -104,9 +104,7 @@ impl ProposeCredentialMessage {
             format: Some(formats::ANONCREDS_CREDENTIAL_OFFER.to_string()),
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Json {
-                json: proposal_value,
-            },
+            data: AttachmentData::json(proposal_value),
         };
 
         DidcommMessage::builder(Self::TYPE)

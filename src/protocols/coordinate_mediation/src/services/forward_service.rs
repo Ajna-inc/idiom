@@ -71,9 +71,9 @@ fn encrypted_to_attachment(
         format: None,
         lastmod_time: None,
         byte_count: Some(encrypted_message.len()),
-        data: didcomm::core::models::AttachmentData::Base64 {
-            base64: base64::engine::general_purpose::STANDARD.encode(encrypted_message.as_bytes()),
-        },
+        data: didcomm::core::models::AttachmentData::base64(
+            base64::engine::general_purpose::STANDARD.encode(encrypted_message.as_bytes()),
+        ),
     }
 }
 

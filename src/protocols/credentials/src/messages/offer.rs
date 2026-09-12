@@ -130,7 +130,7 @@ impl OfferCredentialMessage {
             ),
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Json { json: offer_value },
+            data: AttachmentData::json(offer_value),
         };
 
         DidcommMessage::builder(Self::TYPE)
@@ -182,31 +182,29 @@ pub(crate) fn extract_attachment_json(
         .first()
         .ok_or(crate::CredentialError::MissingAttachment)?;
 
-    match &attachment.data {
-        AttachmentData::Json { json } => {
-            serde_json::to_string(json).map_err(crate::CredentialError::Serialization)
-        }
-        AttachmentData::Base64 { base64: data } => {
-            // Decode base64 to string
-            use std::str;
-            let decoded = base64_decode(data).map_err(|e| {
+    let d = &attachment.data;
+    if let Some(json) = &d.json {
+        serde_json::to_string(json).map_err(crate::CredentialError::Serialization)
+    } else if let Some(data) = &d.base64 {
+        use std::str;
+        let decoded = base64_decode(data).map_err(|e| {
+            crate::CredentialError::InvalidAttachmentFormat(format!(
+                "Failed to decode base64 attachment: {}",
+                e
+            ))
+        })?;
+        str::from_utf8(&decoded)
+            .map(|s| s.to_string())
+            .map_err(|e| {
                 crate::CredentialError::InvalidAttachmentFormat(format!(
-                    "Failed to decode base64 attachment: {}",
+                    "Base64 attachment is not valid UTF-8: {}",
                     e
                 ))
-            })?;
-            str::from_utf8(&decoded)
-                .map(|s| s.to_string())
-                .map_err(|e| {
-                    crate::CredentialError::InvalidAttachmentFormat(format!(
-                        "Base64 attachment is not valid UTF-8: {}",
-                        e
-                    ))
-                })
-        }
-        _ => Err(crate::CredentialError::InvalidAttachmentFormat(
+            })
+    } else {
+        Err(crate::CredentialError::InvalidAttachmentFormat(
             "Unsupported attachment data format".to_string(),
-        )),
+        ))
     }
 }
 

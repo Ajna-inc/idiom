@@ -89,13 +89,12 @@ fn fixture_delivery_aries_data_json_decodes() {
     assert_eq!(decoded.attachments[0].id.as_deref(), Some("m-1"));
     assert_eq!(decoded.attachments[1].id.as_deref(), Some("m-2"));
     // Verify the attachment data branch is `json` (the canonical emission shape).
-    use didcomm::core::models::AttachmentData;
-    match &decoded.attachments[0].data {
-        AttachmentData::Json { json: payload } => {
-            assert_eq!(payload["protected"], "encrypted-jwe-1");
-        }
-        other => panic!("expected AttachmentData::Json, got {other:?}"),
-    }
+    let data = &decoded.attachments[0].data;
+    let payload = data
+        .json
+        .as_ref()
+        .unwrap_or_else(|| panic!("expected json attachment data, got {data:?}"));
+    assert_eq!(payload["protected"], "encrypted-jwe-1");
 }
 
 #[test]

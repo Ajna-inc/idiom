@@ -142,16 +142,63 @@ pub struct Attachment {
     pub data: AttachmentData,
 }
 
-/// Attachment data formats
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum AttachmentData {
-    /// Base64-encoded data
-    Base64 { base64: String },
-    /// JSON data
-    Json { json: serde_json::Value },
-    /// External link
-    Links { links: Vec<String> },
+/// Attachment data. Carriers and integrity fields are siblings, not
+/// alternatives: a `links` attachment needs a `hash` to be verifiable.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct AttachmentData {
+    /// Detached JWS. Carried, not interpreted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jws: Option<serde_json::Value>,
+
+    /// `hash` is the v2 name; v1 and Credo emit `sha256`, so both parse.
+    #[serde(alias = "sha256", skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base64: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Value>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<String>>,
+}
+
+impl AttachmentData {
+    pub fn base64(data: impl Into<String>) -> Self {
+        Self {
+            base64: Some(data.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn json(value: serde_json::Value) -> Self {
+        Self {
+            json: Some(value),
+            ..Default::default()
+        }
+    }
+
+    pub fn links(urls: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            links: Some(urls.into_iter().map(Into::into).collect()),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_hash(mut self, hash: impl Into<String>) -> Self {
+        self.hash = Some(hash.into());
+        self
+    }
+
+    pub fn with_jws(mut self, jws: serde_json::Value) -> Self {
+        self.jws = Some(jws);
+        self
+    }
+
+    pub fn is_external(&self) -> bool {
+        self.links.as_ref().is_some_and(|l| !l.is_empty())
+    }
 }
 
 impl Message {
@@ -410,14 +457,59 @@ mod tests {
             format: None,
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Base64 {
-                base64: "SGVsbG8gV29ybGQ=".to_string(),
-            },
+            data: AttachmentData::base64("SGVsbG8gV29ybGQ=".to_string()),
         };
 
         let json = serde_json::to_string(&attachment).unwrap();
         let deserialized: Attachment = serde_json::from_str(&json).unwrap();
 
         assert_eq!(attachment, deserialized);
+    }
+}
+
+#[cfg(test)]
+mod attachment_data_tests {
+    use super::*;
+
+    /// A link keeps its hash. The untagged enum this replaced parsed the
+    /// object as `Links` and threw the hash away.
+    #[test]
+    fn a_link_carries_its_hash() {
+        let d: AttachmentData =
+            serde_json::from_str(r#"{"links":["https://host/blob"],"hash":"sha256-abc"}"#).unwrap();
+        assert_eq!(
+            d.links.as_deref(),
+            Some(&["https://host/blob".to_string()][..])
+        );
+        assert_eq!(d.hash.as_deref(), Some("sha256-abc"));
+        assert!(d.is_external());
+    }
+
+    /// v1 and Credo spell it `sha256`.
+    #[test]
+    fn the_v1_spelling_still_parses() {
+        let d: AttachmentData = serde_json::from_str(r#"{"links":["u"],"sha256":"abc"}"#).unwrap();
+        assert_eq!(d.hash.as_deref(), Some("abc"));
+    }
+
+    /// Existing producers emit exactly what they used to.
+    #[test]
+    fn inline_carriers_are_unchanged_on_the_wire() {
+        assert_eq!(
+            serde_json::to_string(&AttachmentData::base64("aGk=")).unwrap(),
+            r#"{"base64":"aGk="}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&AttachmentData::json(serde_json::json!({"a":1}))).unwrap(),
+            r#"{"json":{"a":1}}"#
+        );
+    }
+
+    #[test]
+    fn a_link_with_no_hash_is_still_external() {
+        let d = AttachmentData::links(["https://host/blob"]).with_hash("h");
+        assert_eq!(d.hash.as_deref(), Some("h"));
+        assert!(AttachmentData::links(["u"]).is_external());
+        assert!(!AttachmentData::base64("x").is_external());
     }
 }

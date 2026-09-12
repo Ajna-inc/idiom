@@ -101,9 +101,7 @@ mod tests {
             format: None,
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Base64 {
-                base64: "dGVzdA==".to_string(),
-            },
+            data: AttachmentData::base64("dGVzdA==".to_string()),
         }
     }
 

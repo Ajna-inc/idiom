@@ -104,9 +104,7 @@ impl RequestCredentialMessage {
             ),
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Json {
-                json: request_value,
-            },
+            data: AttachmentData::json(request_value),
         };
 
         DidcommMessage::builder(Self::TYPE)

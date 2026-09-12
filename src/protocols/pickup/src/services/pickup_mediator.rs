@@ -121,12 +121,10 @@ impl<R: MessageQueueRepositoryTrait> PickupMediatorService<R> {
                 format: None,
                 lastmod_time: None,
                 byte_count: Some(msg.encrypted_message.len()),
-                data: AttachmentData::Base64 {
-                    base64: base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        msg.encrypted_message.as_bytes(),
-                    ),
-                },
+                data: AttachmentData::base64(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    msg.encrypted_message.as_bytes(),
+                )),
             })
             .collect();
 

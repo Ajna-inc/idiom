@@ -84,10 +84,10 @@ impl RequestPresentationMessage {
             format: Some(ANONCREDS_PROOF_REQUEST.to_string()),
             lastmod_time: None,
             byte_count: None,
-            data: AttachmentData::Json {
-                json: serde_json::from_str(&self.proof_request_json)
+            data: AttachmentData::json(
+                serde_json::from_str(&self.proof_request_json)
                     .unwrap_or_else(|_| serde_json::Value::String(self.proof_request_json.clone())),
-            },
+            ),
         };
 
         let mut msg = DidcommMessage::new(self.id.clone(), Self::TYPE.to_string(), body);
@@ -137,17 +137,22 @@ impl RequestPresentationMessage {
             .ok_or_else(|| "No proof request attachment found".to_string())?;
 
         let proof_request_json = match &proof_request_attachment.data {
-            AttachmentData::Json { json } => serde_json::to_string(json)
-                .map_err(|e| format!("Failed to serialize proof request: {}", e))?,
-            AttachmentData::Base64 { base64 } => {
+            d if d.json.is_some() => {
+                let json = d.json.as_ref().expect("checked");
+                serde_json::to_string(json)
+                    .map_err(|e| format!("Failed to serialize proof request: {}", e))?
+            }
+            d if d.base64.is_some() => {
+                let base64 = d.base64.as_ref().expect("checked");
                 let decoded = base64_decode(base64)
                     .map_err(|e| format!("Failed to decode base64 attachment: {}", e))?;
                 String::from_utf8(decoded)
                     .map_err(|e| format!("Invalid UTF-8 in proof request: {}", e))?
             }
-            AttachmentData::Links { .. } => {
+            d if d.is_external() => {
                 return Err("Links attachments are not supported for proof requests".to_string());
             }
+            _ => return Err("Attachment carries no data".to_string()),
         };
 
         Ok(Self {
