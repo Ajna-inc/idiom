@@ -345,6 +345,7 @@ impl Oid4vpVerifierService {
                 expected_audience: Some(client_id.to_string()),
                 require_key_binding: false,
                 max_kb_age: None,
+                ..Default::default()
             };
             let result = verifier
                 .verify(&sd_jwt, &options)

@@ -36,6 +36,10 @@ pub struct SdJwtVerificationOptions {
     pub require_key_binding: bool,
     /// Maximum age for key binding JWT (in seconds)
     pub max_kb_age: Option<i64>,
+    /// Refuse any Disclosure (possession-only profiles).
+    pub forbid_disclosures: bool,
+    /// Instant for `exp`/`nbf`/KB-JWT `iat` checks; `None` = wall clock.
+    pub now: Option<i64>,
 }
 
 /// SD-JWT Verifier
@@ -83,6 +87,7 @@ impl SdJwtVerifier {
     ) -> Result<SdJwtVerificationResult, Box<dyn std::error::Error + Send + Sync>> {
         let mut errors = Vec::new();
         let mut is_valid = true;
+        let now = options.now.unwrap_or_else(|| Utc::now().timestamp());
 
         // 1. Verify JWT signature
         let jwt_valid = self.verify_jwt_signature(&sd_jwt_vc.jwt).await?;
@@ -93,6 +98,12 @@ impl SdJwtVerifier {
 
         // 2. Parse and validate claims
         let claims = self.parse_jwt_claims(&sd_jwt_vc.jwt)?;
+
+        // 2b. Refuse disclosures when the profile forbids them
+        if options.forbid_disclosures && !sd_jwt_vc.disclosures.is_empty() {
+            errors.push("Disclosures are not permitted by the verification profile".to_string());
+            is_valid = false;
+        }
 
         // 3. Verify disclosures
         let disclosure_valid = self.verify_disclosures(&claims, &sd_jwt_vc.disclosures)?;
@@ -131,7 +142,7 @@ impl SdJwtVerifier {
 
         // 6. Verify expiration
         if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-            if exp < Utc::now().timestamp() {
+            if exp < now {
                 errors.push("SD-JWT has expired".to_string());
                 is_valid = false;
             }
@@ -139,7 +150,7 @@ impl SdJwtVerifier {
 
         // 7. Verify not before
         if let Some(nbf) = claims.get("nbf").and_then(|v| v.as_i64()) {
-            if nbf > Utc::now().timestamp() {
+            if nbf > now {
                 errors.push("SD-JWT not yet valid".to_string());
                 is_valid = false;
             }
@@ -243,112 +254,130 @@ impl SdJwtVerifier {
         sd_jwt_claims: &Value,
         options: &SdJwtVerificationOptions,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        // Parse key binding JWT
+        let now = options.now.unwrap_or_else(|| Utc::now().timestamp());
+
+        // RFC 9901 §4.3: typ MUST be kb+jwt; alg is bound to the cnf key type below
+        let header = self.parse_jwt_header(kb_jwt)?;
+        if header.get("typ").and_then(Value::as_str) != Some("kb+jwt") {
+            return Ok(false);
+        }
+        let Some(alg) = header.get("alg").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+
         let kb_claims = self.parse_jwt_claims(kb_jwt)?;
 
-        // Verify SD-JWT hash
-        let expected_hash = self.hasher.hash_sd_jwt(sd_jwt);
-        let actual_hash = kb_claims
-            .get("_sd_hash")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| SdJwtError::InvalidKeyBinding("Missing _sd_hash".to_string()))?;
-
-        if expected_hash != actual_hash {
+        // RFC 9901 §4.3 sd_hash over the presentation without the KB-JWT
+        let Some(actual_hash) = kb_claims.get("sd_hash").and_then(Value::as_str) else {
+            return Ok(false);
+        };
+        if self.hasher.hash_sd_jwt(sd_jwt) != actual_hash {
             return Ok(false);
         }
 
-        // Verify nonce if expected
         if let Some(expected_nonce) = &options.expected_nonce {
-            let nonce = kb_claims
-                .get("nonce")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| SdJwtError::InvalidKeyBinding("Missing nonce".to_string()))?;
-
-            if nonce != expected_nonce {
+            if kb_claims.get("nonce").and_then(Value::as_str) != Some(expected_nonce.as_str()) {
                 return Ok(false);
             }
         }
-
-        // Verify audience if expected
         if let Some(expected_aud) = &options.expected_audience {
-            let aud = kb_claims
-                .get("aud")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| SdJwtError::InvalidKeyBinding("Missing audience".to_string()))?;
-
-            if aud != expected_aud {
+            if kb_claims.get("aud").and_then(Value::as_str) != Some(expected_aud.as_str()) {
                 return Ok(false);
             }
         }
-
-        // Verify age
         if let Some(max_age) = options.max_kb_age {
-            let iat = kb_claims
-                .get("iat")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| SdJwtError::InvalidKeyBinding("Missing iat".to_string()))?;
-
-            let age = Utc::now().timestamp() - iat;
-            if age > max_age {
+            let Some(iat) = kb_claims.get("iat").and_then(Value::as_i64) else {
+                return Ok(false);
+            };
+            if now - iat > max_age {
                 return Ok(false);
             }
         }
 
-        // Verify the KB-JWT signature against the holder key bound into the
-        // credential's `cnf` claim (real possession proof). Credentials
-        // without `cnf` fall back to claims-only binding (legacy issuers).
-        if let Some(cnf_jwk) = sd_jwt_claims.pointer("/cnf/jwk") {
-            if !Self::verify_kb_signature(kb_jwt, cnf_jwk)? {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
+        // No cnf key means no verifiable key binding; there is no claims-only fallback
+        let Some(cnf_jwk) = sd_jwt_claims.pointer("/cnf/jwk") else {
+            return Ok(false);
+        };
+        Self::verify_kb_signature(kb_jwt, cnf_jwk, alg)
     }
 
-    /// Verify a KB-JWT's EdDSA signature against an OKP/Ed25519 JWK.
+    /// Parse the (unverified) header of a compact JWT.
+    fn parse_jwt_header(&self, jwt: &str) -> Result<Value, SdJwtError> {
+        let parts: Vec<&str> = jwt.split('.').collect();
+        if parts.len() != 3 {
+            return Err(SdJwtError::InvalidFormat("Invalid JWT format".to_string()));
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(parts[0])
+            .map_err(|e| SdJwtError::InvalidFormat(format!("Base64 decode error: {}", e)))?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Verify the KB-JWT signature against the `cnf` JWK; `alg` must match the key type.
     fn verify_kb_signature(
         kb_jwt: &str,
         jwk: &Value,
+        alg: &str,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
         let parts: Vec<&str> = kb_jwt.split('.').collect();
         if parts.len() != 3 {
             return Ok(false);
         }
-        let (kty, crv) = (
-            jwk.get("kty").and_then(|v| v.as_str()),
-            jwk.get("crv").and_then(|v| v.as_str()),
-        );
-        if kty != Some("OKP") || crv != Some("Ed25519") {
-            // Unsupported holder key type — fail closed rather than skip.
-            return Ok(false);
-        }
-        let x = jwk
-            .get("x")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| SdJwtError::InvalidKeyBinding("cnf.jwk missing x".to_string()))?;
-        let pk_bytes = URL_SAFE_NO_PAD
-            .decode(x)
-            .map_err(|e| SdJwtError::InvalidKeyBinding(format!("cnf.jwk.x decode: {e}")))?;
-        let pk_array: [u8; 32] = pk_bytes
-            .try_into()
-            .map_err(|_| SdJwtError::InvalidKeyBinding("cnf.jwk.x wrong length".to_string()))?;
-        let sig_bytes = URL_SAFE_NO_PAD
-            .decode(parts[2])
-            .map_err(|e| SdJwtError::InvalidKeyBinding(format!("kb signature decode: {e}")))?;
-        let sig_array: [u8; 64] = match sig_bytes.try_into() {
-            Ok(a) => a,
-            Err(_) => return Ok(false),
-        };
-        let Ok(pk) = VerifyingKey::from_bytes(&pk_array) else {
-            return Ok(false);
-        };
         let signing_input = format!("{}.{}", parts[0], parts[1]);
-        Ok(pk
-            .verify(signing_input.as_bytes(), &Signature::from_bytes(&sig_array))
-            .is_ok())
+        let Ok(signature) = URL_SAFE_NO_PAD.decode(parts[2]) else {
+            return Ok(false);
+        };
+        let field = |name: &str| -> Option<Vec<u8>> {
+            jwk.get(name)
+                .and_then(Value::as_str)
+                .and_then(|v| URL_SAFE_NO_PAD.decode(v).ok())
+        };
+        let kty = jwk.get("kty").and_then(Value::as_str);
+        let crv = jwk.get("crv").and_then(Value::as_str);
+
+        match (alg, kty, crv) {
+            ("EdDSA", Some("OKP"), Some("Ed25519")) => {
+                use ed25519_dalek::{Signature, VerifyingKey};
+                let Some(x) = field("x") else {
+                    return Ok(false);
+                };
+                let Ok(x) = <[u8; 32]>::try_from(x) else {
+                    return Ok(false);
+                };
+                let Ok(key) = VerifyingKey::from_bytes(&x) else {
+                    return Ok(false);
+                };
+                let Ok(sig) = Signature::from_slice(&signature) else {
+                    return Ok(false);
+                };
+                Ok(key.verify_strict(signing_input.as_bytes(), &sig).is_ok())
+            }
+            ("ES256", Some("EC"), Some("P-256")) => {
+                use p256::ecdsa::signature::Verifier;
+                use p256::ecdsa::{Signature, VerifyingKey};
+                use p256::elliptic_curve::generic_array::GenericArray;
+                use p256::EncodedPoint;
+                let (Some(x), Some(y)) = (field("x"), field("y")) else {
+                    return Ok(false);
+                };
+                if x.len() != 32 || y.len() != 32 {
+                    return Ok(false);
+                }
+                let point = EncodedPoint::from_affine_coordinates(
+                    GenericArray::from_slice(&x),
+                    GenericArray::from_slice(&y),
+                    false,
+                );
+                let Ok(key) = VerifyingKey::from_encoded_point(&point) else {
+                    return Ok(false);
+                };
+                let Ok(sig) = Signature::from_slice(&signature) else {
+                    return Ok(false);
+                };
+                Ok(key.verify(signing_input.as_bytes(), &sig).is_ok())
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Get specific disclosed claim by path
@@ -406,6 +435,16 @@ impl VerificationOptionsBuilder {
         self
     }
 
+    pub fn forbid_disclosures(mut self) -> Self {
+        self.options.forbid_disclosures = true;
+        self
+    }
+
+    pub fn at_time(mut self, now_unix: i64) -> Self {
+        self.options.now = Some(now_unix);
+        self
+    }
+
     /// Build the options
     pub fn build(self) -> SdJwtVerificationOptions {
         self.options
@@ -432,5 +471,213 @@ mod tests {
         assert_eq!(options.expected_nonce, Some("nonce123".to_string()));
         assert!(options.require_key_binding);
         assert_eq!(options.max_kb_age, Some(300));
+    }
+
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use serde_json::json;
+
+    const SD_JWT_INPUT: &str = "issuer.jwt.sig~";
+
+    fn verifier() -> SdJwtVerifier {
+        SdJwtVerifier {
+            hasher: SdJwtHasher::default(),
+            did_verifier: None,
+        }
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        URL_SAFE_NO_PAD.encode(bytes)
+    }
+
+    fn jwt(header: &Value, payload: &Value, sign: impl FnOnce(&[u8]) -> Vec<u8>) -> String {
+        let h = b64(&serde_json::to_vec(header).unwrap());
+        let p = b64(&serde_json::to_vec(payload).unwrap());
+        let input = format!("{h}.{p}");
+        let sig = sign(input.as_bytes());
+        format!("{input}.{}", b64(&sig))
+    }
+
+    fn ed25519() -> (ed25519_dalek::SigningKey, Value) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let jwk = json!({"kty": "OKP", "crv": "Ed25519", "x": b64(sk.verifying_key().as_bytes())});
+        (sk, jwk)
+    }
+
+    fn p256() -> (p256::ecdsa::SigningKey, Value) {
+        let sk = p256::ecdsa::SigningKey::from_slice(&[9u8; 32]).unwrap();
+        let point = sk.verifying_key().to_encoded_point(false);
+        let jwk = json!({
+            "kty": "EC", "crv": "P-256",
+            "x": b64(point.x().unwrap()), "y": b64(point.y().unwrap()),
+        });
+        (sk, jwk)
+    }
+
+    fn sign_ed(sk: &ed25519_dalek::SigningKey) -> impl FnOnce(&[u8]) -> Vec<u8> + '_ {
+        move |m| {
+            use ed25519_dalek::Signer;
+            sk.sign(m).to_bytes().to_vec()
+        }
+    }
+
+    fn sign_es(sk: &p256::ecdsa::SigningKey) -> impl FnOnce(&[u8]) -> Vec<u8> + '_ {
+        move |m| {
+            use p256::ecdsa::signature::Signer;
+            let sig: p256::ecdsa::Signature = sk.sign(m);
+            sig.to_bytes().to_vec()
+        }
+    }
+
+    fn kb_header(alg: &str) -> Value {
+        json!({"typ": "kb+jwt", "alg": alg})
+    }
+
+    fn kb_payload(iat: i64) -> Value {
+        json!({
+            "nonce": "n", "aud": "https://rp.example", "iat": iat,
+            "sd_hash": SdJwtHasher::default().hash_sd_jwt(SD_JWT_INPUT),
+        })
+    }
+
+    fn cnf(jwk: &Value) -> Value {
+        json!({"cnf": {"jwk": jwk}})
+    }
+
+    fn options(now: i64) -> SdJwtVerificationOptions {
+        VerificationOptionsBuilder::new()
+            .with_audience("https://rp.example".to_string())
+            .with_nonce("n".to_string())
+            .require_key_binding()
+            .at_time(now)
+            .build()
+    }
+
+    async fn kb(
+        kb_jwt: &str,
+        issuer_claims: &Value,
+        opts: &SdJwtVerificationOptions,
+    ) -> Result<bool, String> {
+        verifier()
+            .verify_key_binding(kb_jwt, SD_JWT_INPUT, issuer_claims, opts)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    #[tokio::test]
+    async fn es256_key_binding_verifies_under_a_p256_cnf_key() {
+        let (sk, jwk) = p256();
+        let token = jwt(&kb_header("ES256"), &kb_payload(1_000), sign_es(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(true));
+        let mut broken = token.clone();
+        broken.replace_range(
+            broken.len() - 1..,
+            if broken.ends_with('A') { "B" } else { "A" },
+        );
+        assert_eq!(kb(&broken, &cnf(&jwk), &options(1_000)).await, Ok(false));
+    }
+
+    #[tokio::test]
+    async fn eddsa_key_binding_still_verifies() {
+        let (sk, jwk) = ed25519();
+        let token = jwt(&kb_header("EdDSA"), &kb_payload(1_000), sign_ed(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn the_kb_jwt_alg_must_match_the_cnf_key_type() {
+        let (sk, jwk) = ed25519();
+        let token = jwt(&kb_header("ES256"), &kb_payload(1_000), sign_ed(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(false));
+        let (sk, jwk) = p256();
+        let token = jwt(&kb_header("EdDSA"), &kb_payload(1_000), sign_es(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(false));
+    }
+
+    #[tokio::test]
+    async fn a_kb_jwt_without_typ_kb_jwt_is_refused() {
+        let (sk, jwk) = ed25519();
+        for header in [
+            json!({"alg": "EdDSA"}),
+            json!({"typ": "JWT", "alg": "EdDSA"}),
+        ] {
+            let token = jwt(&header, &kb_payload(1_000), sign_ed(&sk));
+            assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(false));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_hash_claim_is_sd_hash_per_rfc_9901() {
+        let (sk, jwk) = ed25519();
+        let token = jwt(&kb_header("EdDSA"), &kb_payload(1_000), sign_ed(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(true));
+        let mut legacy = kb_payload(1_000);
+        let hash = legacy.as_object_mut().unwrap().remove("sd_hash").unwrap();
+        legacy["_sd_hash"] = hash;
+        let token = jwt(&kb_header("EdDSA"), &legacy, sign_ed(&sk));
+        assert_eq!(kb(&token, &cnf(&jwk), &options(1_000)).await, Ok(false));
+    }
+
+    #[tokio::test]
+    async fn a_kb_jwt_is_never_accepted_without_a_cnf_key() {
+        let (sk, _) = ed25519();
+        let token = jwt(&kb_header("EdDSA"), &kb_payload(1_000), sign_ed(&sk));
+        for issuer in [
+            json!({}),
+            json!({"cnf": {}}),
+            json!({"cnf": {"kid": "did:key:z6Mk"}}),
+        ] {
+            assert_eq!(kb(&token, &issuer, &options(1_000)).await, Ok(false));
+        }
+    }
+
+    #[tokio::test]
+    async fn kb_jwt_age_is_measured_at_the_supplied_instant() {
+        let (sk, jwk) = ed25519();
+        let token = jwt(&kb_header("EdDSA"), &kb_payload(1_000), sign_ed(&sk));
+        let aged = |max: i64| {
+            VerificationOptionsBuilder::new()
+                .with_audience("https://rp.example".to_string())
+                .with_nonce("n".to_string())
+                .require_key_binding()
+                .with_max_kb_age(max)
+                .at_time(1_400)
+                .build()
+        };
+        assert_eq!(kb(&token, &cnf(&jwk), &aged(300)).await, Ok(false));
+        assert_eq!(kb(&token, &cnf(&jwk), &aged(500)).await, Ok(true));
+    }
+
+    #[tokio::test]
+    async fn disclosures_are_refused_when_the_profile_forbids_them() {
+        let sd_jwt_vc = SdJwtVc {
+            jwt: jwt(&json!({"alg": "EdDSA"}), &json!({"iss": "x"}), |_| {
+                vec![0; 64]
+            }),
+            disclosures: vec![b64(b"[\"salt\",\"name\",\"value\"]")],
+            key_binding_jwt: None,
+        };
+        let opts = VerificationOptionsBuilder::new()
+            .forbid_disclosures()
+            .at_time(1)
+            .build();
+        let result = verifier().verify(&sd_jwt_vc, &opts).await.unwrap();
+        assert!(!result.is_valid);
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.contains("Disclosures are not permitted")));
+    }
+
+    #[test]
+    fn from_compact_refuses_malformed_envelopes() {
+        assert!(SdJwtVc::from_compact("a.b.c~~").is_err());
+        assert!(SdJwtVc::from_compact("nodots~").is_err());
+        assert!(SdJwtVc::from_compact("a.b.c").is_err());
+        assert!(SdJwtVc::from_compact("a.b.c~").is_ok());
+        assert!(SdJwtVc::from_compact("a.b.c~d1~").is_ok());
+        let with_kb = SdJwtVc::from_compact("a.b.c~d1~k.b.j").unwrap();
+        assert_eq!(with_kb.disclosures, vec!["d1".to_string()]);
+        assert_eq!(with_kb.key_binding_jwt.as_deref(), Some("k.b.j"));
     }
 }

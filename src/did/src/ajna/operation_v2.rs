@@ -15,7 +15,7 @@ use crate::ajna::{
     AjnaError, Result,
 };
 use chrono::Utc;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
 /// Operation type constant
@@ -226,7 +226,7 @@ impl Operation {
             .map_err(|e| AjnaError::SerializationError(format!("Canonical bytes: {}", e)))
     }
 
-    /// Verify the operation signature
+    /// Verify the operation signature, rejecting weak keys and small-order R.
     ///
     /// # Arguments
     /// * `verifying_key` - Ed25519 public key to verify with
@@ -240,11 +240,8 @@ impl Operation {
         // Decode signature
         let signature = base64_decode_signature(&self.auth.proof)?;
 
-        // Verify
-        match verifying_key.verify(&sig_bytes, &signature) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        // Reject weak keys and small-order R: under them the equation holds for unsigned input.
+        Ok(verifying_key.verify_strict(&sig_bytes, &signature).is_ok())
     }
 
     /// Verify the op_id hash
@@ -356,6 +353,52 @@ mod tests {
         // Should fail with wrong key
         let (_, wrong_key) = create_test_key();
         assert!(!op.verify_signature(&wrong_key).unwrap());
+    }
+
+    #[test]
+    fn a_forgery_under_a_weak_public_key_is_refused() {
+        // For A = identity, R == [s]B - [k]A holds for R = [s]B with any s: a signature
+        // nobody produced verifies under plain `verify`.
+        let (signing_key, _) = create_test_key();
+        let op = Operation::new(
+            "did:ajna:test".to_string(),
+            vec![],
+            "did:ajna:device:1".to_string(),
+            ClockEntry {
+                actor_id: 1,
+                counter: 1,
+            },
+            Delta::VmAdd {
+                entry: VerificationMethod {
+                    id: "did:ajna:test#key-1".to_string(),
+                    type_: "Ed25519VerificationKey2020".to_string(),
+                    controller: "did:ajna:test".to_string(),
+                    public_key_multibase: "z6MkhaXg...".to_string(),
+                    purpose: None,
+                },
+            },
+            &signing_key,
+            "did:ajna:test#key-1".to_string(),
+        )
+        .expect("Failed to create operation");
+
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        let weak = VerifyingKey::from_bytes(&identity).unwrap();
+        assert!(weak.is_weak());
+
+        // R = basepoint, s = 1
+        let mut forged = [0u8; 64];
+        forged[0] = 0x58;
+        forged[1..32].fill(0x66);
+        forged[32] = 1;
+        let mut forged_op = op.clone();
+        forged_op.auth.proof = {
+            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+            use base64::Engine;
+            URL_SAFE_NO_PAD.encode(forged)
+        };
+        assert!(!forged_op.verify_signature(&weak).unwrap());
     }
 
     #[test]

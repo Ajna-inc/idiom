@@ -43,40 +43,34 @@ impl SdJwtVc {
         input
     }
 
-    /// Parse from compact format
+    /// RFC 9901 §4: `<JWT>~<D1>~…~<Dn>~[<KB-JWT>]`; trailing `~` required, no empty segments.
     pub fn from_compact(compact: &str) -> Result<Self, SdJwtError> {
-        let parts: Vec<&str> = compact.split('~').collect();
-
-        if parts.is_empty() {
-            return Err(SdJwtError::InvalidFormat("Empty SD-JWT".to_string()));
+        let mut parts = compact.split('~');
+        let jwt = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| SdJwtError::InvalidFormat("Empty SD-JWT".to_string()))?;
+        if jwt.split('.').count() != 3 {
+            return Err(SdJwtError::InvalidFormat(
+                "Issuer-signed JWT must have three segments".to_string(),
+            ));
+        }
+        let rest: Vec<&str> = parts.collect();
+        let Some((kb_jwt, disclosures)) = rest.split_last() else {
+            return Err(SdJwtError::InvalidFormat(
+                "SD-JWT must end with '~' (RFC 9901 §4)".to_string(),
+            ));
+        };
+        if disclosures.iter().any(|d| d.is_empty()) {
+            return Err(SdJwtError::InvalidFormat(
+                "Empty Disclosure segment".to_string(),
+            ));
         }
 
-        let jwt = parts[0].to_string();
-
-        // Last part is key binding JWT or empty
-        let kb_jwt = parts.last().and_then(|s| {
-            if s.is_empty() {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-
-        // Middle parts are disclosures
-        let disclosures = if parts.len() > 2 {
-            parts[1..parts.len() - 1]
-                .iter()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
         Ok(Self {
-            jwt,
-            disclosures,
-            key_binding_jwt: kb_jwt,
+            jwt: jwt.to_string(),
+            disclosures: disclosures.iter().map(|s| s.to_string()).collect(),
+            key_binding_jwt: (!kb_jwt.is_empty()).then(|| kb_jwt.to_string()),
         })
     }
 }
@@ -139,8 +133,7 @@ pub struct KeyBindingJwt {
     /// Issued at timestamp
     pub iat: i64,
 
-    /// Hash of the SD-JWT
-    #[serde(rename = "_sd_hash")]
+    /// RFC 9901 §4.3 `sd_hash` (the pre-RFC `_sd_hash` is not accepted).
     pub sd_hash: String,
 
     /// Additional claims

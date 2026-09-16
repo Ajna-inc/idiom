@@ -51,6 +51,7 @@ pub mod did_syntax; // DID syntax with multibase
 pub mod didcomm_sync; // DIDComm sync protocol
 pub mod document;
 pub mod error;
+pub mod hybrid_signature;
 pub mod lww_map;
 pub mod merkle_dag;
 pub mod method;
