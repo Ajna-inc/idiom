@@ -5,8 +5,45 @@ use crate::{
     DependencyError, Lifecycle, Provider, Result,
 };
 use std::any::TypeId;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+
+/// One frame of a resolution chain: which container is resolving which type.
+///
+/// The container is identified by its registration table, which clones share,
+/// so a factory that resolves through a clone of its own container is still
+/// in the same chain.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Frame {
+    container: usize,
+    type_id: TypeId,
+    type_name: &'static str,
+}
+
+thread_local! {
+    /// The resolution chains in flight on this thread, innermost last.
+    ///
+    /// Cycle detection is per chain, not per container: a chain only ever
+    /// grows through a factory calling `resolve` again, and factories are
+    /// synchronous, so a chain lives entirely on the thread that started it.
+    /// Two concurrent `resolve`s of the same type on different threads are
+    /// independent chains and must never see each other.
+    static RESOLUTION_STACK: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Pops the frame pushed for one `resolve` call when that call ends, however
+/// it ends — a factory that panics must not leave its frame behind.
+struct FrameGuard;
+
+impl Drop for FrameGuard {
+    fn drop(&mut self) {
+        // `try_with`: the thread may be tearing its locals down already.
+        let _ = RESOLUTION_STACK.try_with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
 
 /// Dependency injection container
 ///
@@ -61,7 +98,6 @@ use std::sync::{Arc, RwLock};
 /// ```
 pub struct Container {
     providers: Arc<RwLock<HashMap<TypeId, Box<dyn Provider>>>>,
-    resolution_stack: Arc<RwLock<Vec<TypeId>>>,
 }
 
 impl Container {
@@ -69,8 +105,12 @@ impl Container {
     pub fn new() -> Self {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
-            resolution_stack: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    /// Identity shared by this container and its clones.
+    fn identity(&self) -> usize {
+        Arc::as_ptr(&self.providers) as *const () as usize
     }
 
     /// Register a singleton service with a factory
@@ -156,31 +196,36 @@ impl Container {
     /// - The service factory fails
     pub fn resolve<T: Send + Sync + 'static>(&self) -> Result<Arc<T>> {
         let type_id = TypeId::of::<T>();
+        let frame = Frame {
+            container: self.identity(),
+            type_id,
+            type_name: std::any::type_name::<T>(),
+        };
 
-        // Check for circular dependencies
-        {
-            let mut stack = self.resolution_stack.write().unwrap();
-            if stack.contains(&type_id) {
+        // A cycle is this container asking for a type that is already being
+        // resolved further up this very chain.
+        let cycle = RESOLUTION_STACK.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            if stack.contains(&frame) {
                 let path = stack
                     .iter()
-                    .map(|id| format!("{:?}", id))
+                    .filter(|f| f.container == frame.container)
+                    .chain(std::iter::once(&frame))
+                    .map(|f| f.type_name)
                     .collect::<Vec<_>>()
                     .join(" -> ");
-                return Err(DependencyError::circular_dependency(path));
+                Some(path)
+            } else {
+                stack.push(frame);
+                None
             }
-            stack.push(type_id);
+        });
+        if let Some(path) = cycle {
+            return Err(DependencyError::circular_dependency(path));
         }
+        let _frame = FrameGuard;
 
-        // Resolve
-        let result = self.resolve_internal::<T>(type_id);
-
-        // Pop from resolution stack
-        {
-            let mut stack = self.resolution_stack.write().unwrap();
-            stack.pop();
-        }
-
-        result
+        self.resolve_internal::<T>(type_id)
     }
 
     fn resolve_internal<T: Send + Sync + 'static>(&self, type_id: TypeId) -> Result<Arc<T>> {
@@ -241,7 +286,6 @@ impl Clone for Container {
     fn clone(&self) -> Self {
         Self {
             providers: Arc::clone(&self.providers),
-            resolution_stack: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -390,6 +434,110 @@ mod tests {
         // Both should be able to resolve
         assert!(container.resolve::<TestServiceImpl>().is_ok());
         assert!(cloned.resolve::<TestServiceImpl>().is_ok());
+    }
+
+    /// Two tasks resolving the same registered type at the same time are
+    /// independent resolution chains, not a cycle. The first caller is parked
+    /// inside the factory until the second has resolved, so the two calls are
+    /// guaranteed to overlap.
+    #[test]
+    fn concurrent_resolves_of_the_same_type_are_not_a_cycle() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc;
+
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let calls = AtomicUsize::new(0);
+
+        let mut container = Container::new();
+        container.register_transient_with_factory::<CustomTestService, CustomTestService, _>(
+            move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered_tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
+                Ok(Arc::new(CustomTestService { value: 7 }))
+            },
+        );
+        let container = Arc::new(container);
+
+        let first = {
+            let container = Arc::clone(&container);
+            std::thread::spawn(move || container.resolve::<CustomTestService>())
+        };
+        entered_rx.recv().unwrap();
+
+        // Overlaps the first resolve, which is still inside its factory.
+        let second = container.resolve::<CustomTestService>();
+        release_tx.send(()).unwrap();
+
+        assert!(
+            second.is_ok(),
+            "a concurrent resolve of the same type must not be reported as a cycle: {:?}",
+            second.err()
+        );
+        assert!(first.join().unwrap().is_ok());
+        // Both chains finished; nothing may be left behind for the next resolve.
+        assert!(container.resolve::<CustomTestService>().is_ok());
+    }
+
+    /// A factory that resolves a dependency of its own is a nested chain on
+    /// the same thread and resolves normally.
+    #[test]
+    fn a_nested_dependency_resolves() {
+        #[derive(Default)]
+        struct Leaf;
+        struct Root(#[allow(dead_code)] Arc<Leaf>);
+
+        let handle: Arc<std::sync::OnceLock<Container>> = Arc::new(std::sync::OnceLock::new());
+        let mut container = Container::new();
+        container.register_singleton::<Leaf, Leaf>();
+        let h = Arc::clone(&handle);
+        container.register_singleton_with_factory::<Root, Root, _>(move || {
+            Ok(Arc::new(Root(h.get().unwrap().resolve::<Leaf>()?)))
+        });
+        handle.set(container.clone()).ok();
+
+        assert!(container.resolve::<Root>().is_ok());
+        assert!(container.resolve::<Root>().is_ok());
+    }
+
+    /// A genuine A -> B -> A cycle is still reported, including through a
+    /// clone of the container (clones share the registrations, so they are
+    /// the same container for cycle purposes).
+    #[test]
+    fn a_genuine_cycle_is_still_detected() {
+        struct A;
+        struct B;
+
+        let handle: Arc<std::sync::OnceLock<Container>> = Arc::new(std::sync::OnceLock::new());
+        let mut container = Container::new();
+        let h = Arc::clone(&handle);
+        container.register_transient_with_factory::<A, A, _>(move || {
+            h.get().unwrap().resolve::<B>()?;
+            Ok(Arc::new(A))
+        });
+        let h = Arc::clone(&handle);
+        container.register_transient_with_factory::<B, B, _>(move || {
+            h.get().unwrap().resolve::<A>()?;
+            Ok(Arc::new(B))
+        });
+        handle.set(container.clone()).ok();
+
+        match container.resolve::<A>() {
+            Err(DependencyError::CircularDependency { path }) => {
+                assert!(path.contains("::A"), "path names the cycle: {path}");
+                assert!(path.contains("::B"), "path names the cycle: {path}");
+            }
+            other => panic!("expected CircularDependency, got {:?}", other.map(|_| ())),
+        }
+        // The failed chain unwound cleanly: the same report again, not a
+        // stale frame breaking the next chain in a different way.
+        assert!(matches!(
+            container.resolve::<B>(),
+            Err(DependencyError::CircularDependency { .. })
+        ));
     }
 
     #[test]
