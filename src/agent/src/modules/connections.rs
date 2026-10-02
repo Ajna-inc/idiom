@@ -9,7 +9,25 @@ use protocol_connections::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{interval, timeout};
+use tokio::time::timeout_at;
+
+/// How long [`ConnectionsModule::return_when_is_connected`] and
+/// [`ConnectionsModule::return_when_is_connected_by_thread_id`] wait, when the
+/// caller passes no bound, for a peer that never finishes the DID Exchange.
+///
+/// This is not a budget for a healthy handshake, which completes in well under
+/// a second and wakes the waiter the moment the record reaches `Completed`.
+/// It only decides when to give up on a peer that stopped answering, so it is
+/// deliberately large relative to a handshake — large enough that a machine
+/// under heavy load still finishes the exchange inside it.
+pub const DEFAULT_CONNECTION_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How a waiter names the connection record it is waiting on.
+#[derive(Clone, Copy)]
+enum Lookup<'a> {
+    ById(&'a str),
+    ByThreadId(&'a str),
+}
 
 /// Connections Module providing high-level protocol APIs.
 ///
@@ -106,15 +124,21 @@ impl ConnectionsModule {
 
     /// Wait for a connection to reach the Completed state
     ///
+    /// Returns as soon as the DID Exchange state machine writes `Completed`;
+    /// the service wakes this waiter on every record write, so there is no
+    /// polling cadence and no fixed budget a slow handshake can exceed.
+    ///
     /// # Arguments
     /// * `connection_id` - The connection record ID
-    /// * `timeout_ms` - Optional timeout in milliseconds (default: 15000ms)
+    /// * `timeout_ms` - How long to wait for a peer that never completes
+    ///   (default: [`DEFAULT_CONNECTION_WAIT_TIMEOUT`])
     ///
     /// # Returns
     /// The connection record in Completed state
     ///
     /// # Errors
-    /// Returns AgentError::Connections if timeout is reached or connection not found
+    /// Returns AgentError::Connections if the bound is reached or the
+    /// connection does not exist
     ///
     /// # Example
     /// ```rust,no_run
@@ -132,45 +156,20 @@ impl ConnectionsModule {
         connection_id: &str,
         timeout_ms: Option<u64>,
     ) -> Result<ConnectionRecord> {
-        let timeout_duration = Duration::from_millis(timeout_ms.unwrap_or(15000));
-
-        // Use timeout to limit the wait time
-        timeout(timeout_duration, async {
-            let mut check_interval = interval(Duration::from_millis(100));
-
-            loop {
-                check_interval.tick().await;
-
-                match self.service().get_by_id(connection_id).await {
-                    Ok(Some(record)) => {
-                        if record.state == DidExchangeState::Completed {
-                            return Ok(record);
-                        }
-                    }
-                    Ok(None) => {
-                        return Err(AgentError::Connections(format!(
-                            "Connection not found: {}",
-                            connection_id
-                        )))
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            AgentError::Connections(format!(
-                "Timeout waiting for connection {} to complete",
-                connection_id
-            ))
-        })?
+        self.wait_until_completed(Lookup::ById(connection_id), timeout_ms)
+            .await
     }
 
     /// Wait for a connection with the given thread ID to reach the Completed state
     ///
+    /// Like [`Self::return_when_is_connected`], but a record that does not
+    /// exist yet is waited for rather than reported, since the thread id is
+    /// known before the record is.
+    ///
     /// # Arguments
     /// * `thread_id` - The protocol thread ID
-    /// * `timeout_ms` - Optional timeout in milliseconds (default: 15000ms)
+    /// * `timeout_ms` - How long to wait for a peer that never completes
+    ///   (default: [`DEFAULT_CONNECTION_WAIT_TIMEOUT`])
     ///
     /// # Returns
     /// The connection record in Completed state
@@ -179,35 +178,62 @@ impl ConnectionsModule {
         thread_id: &str,
         timeout_ms: Option<u64>,
     ) -> Result<ConnectionRecord> {
-        let timeout_duration = Duration::from_millis(timeout_ms.unwrap_or(15000));
+        self.wait_until_completed(Lookup::ByThreadId(thread_id), timeout_ms)
+            .await
+    }
 
-        timeout(timeout_duration, async {
-            let mut check_interval = interval(Duration::from_millis(100));
+    /// Sleep until the looked-up record is `Completed`, woken by the service
+    /// on every record write, giving up only at the bound.
+    async fn wait_until_completed(
+        &self,
+        lookup: Lookup<'_>,
+        timeout_ms: Option<u64>,
+    ) -> Result<ConnectionRecord> {
+        let bound = timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(DEFAULT_CONNECTION_WAIT_TIMEOUT);
+        let deadline = tokio::time::Instant::now() + bound;
+        let service = self.service();
+        let notify = service.connection_notify();
 
-            loop {
-                check_interval.tick().await;
+        loop {
+            // Arm the wake-up before reading, so a write that lands between
+            // the read and the await still wakes us.
+            let changed = notify.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
 
-                match self.service().get_by_thread_id(thread_id).await {
-                    Ok(Some(record)) => {
-                        if record.state == DidExchangeState::Completed {
-                            return Ok(record);
-                        }
-                    }
-                    Ok(None) => {
-                        // Connection might not exist yet, keep waiting
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
+            let found = match lookup {
+                Lookup::ById(id) => service.get_by_id(id).await?,
+                Lookup::ByThreadId(thread_id) => service.get_by_thread_id(thread_id).await?,
+            };
+            match (found, lookup) {
+                (Some(record), _) if record.state == DidExchangeState::Completed => {
+                    return Ok(record)
                 }
+                (Some(_), _) => {}
+                (None, Lookup::ById(id)) => {
+                    return Err(AgentError::Connections(format!(
+                        "Connection not found: {}",
+                        id
+                    )))
+                }
+                // The record is created by the handshake itself; keep waiting.
+                (None, Lookup::ByThreadId(_)) => {}
             }
-        })
-        .await
-        .map_err(|_| {
-            AgentError::Connections(format!(
-                "Timeout waiting for connection with thread_id {} to complete",
-                thread_id
-            ))
-        })?
+
+            if timeout_at(deadline, changed).await.is_err() {
+                return Err(AgentError::Connections(match lookup {
+                    Lookup::ById(id) => {
+                        format!("Timeout waiting for connection {} to complete", id)
+                    }
+                    Lookup::ByThreadId(thread_id) => format!(
+                        "Timeout waiting for connection with thread_id {} to complete",
+                        thread_id
+                    ),
+                }));
+            }
+        }
     }
 
     /// Delete a connection record
@@ -532,7 +558,7 @@ impl ConnectionsExt for crate::Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol_connections::ConnectionRepository;
+    use protocol_connections::{ConnectionRepository, DidExchangeResponseMessage};
     use protocol_oob::domain::OutOfBandRole;
     use protocol_oob::messages::{InlineService, OutOfBandInvitation, OutOfBandService};
     use protocol_oob::repository::OutOfBandRecord;
@@ -614,6 +640,132 @@ mod tests {
         // Not completed yet
         let is_connected = module.is_connected(&record.id).await.unwrap();
         assert!(!is_connected);
+    }
+
+    /// A handshake that completes late — long after the old 15 s poll budget,
+    /// well within the bound kept for a peer that never answers — is still
+    /// returned. The clock is paused, so this takes no wall time.
+    #[tokio::test(start_paused = true)]
+    async fn return_when_is_connected_returns_a_handshake_that_completes_late() {
+        let repo = Arc::new(ConnectionRepository::new());
+        let service = Arc::new(ConnectionService::new(repo));
+        let module = ConnectionsModule::new_with_service(service.clone());
+
+        let (record, _) = service
+            .create_request(
+                &create_test_oob_record(),
+                "did:peer:requester".to_string(),
+                Some("Alice".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let late_peer = {
+            let service = service.clone();
+            let thread_id = record.thread_id.clone();
+            let id = record.id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(45)).await;
+                let response =
+                    DidExchangeResponseMessage::new("did:peer:responder".to_string(), thread_id);
+                service
+                    .process_response(&response, None, None)
+                    .await
+                    .unwrap();
+                service.create_complete(&id).await.unwrap();
+            })
+        };
+
+        let connected = module
+            .return_when_is_connected(&record.id, None)
+            .await
+            .expect("a late handshake is still a completed connection");
+        assert_eq!(connected.state, DidExchangeState::Completed);
+        late_peer.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn return_when_is_connected_by_thread_id_returns_a_handshake_that_completes_late() {
+        let repo = Arc::new(ConnectionRepository::new());
+        let service = Arc::new(ConnectionService::new(repo));
+        let module = ConnectionsModule::new_with_service(service.clone());
+
+        let (record, _) = service
+            .create_request(
+                &create_test_oob_record(),
+                "did:peer:requester".to_string(),
+                Some("Alice".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let late_peer = {
+            let service = service.clone();
+            let thread_id = record.thread_id.clone();
+            let id = record.id.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(45)).await;
+                let response =
+                    DidExchangeResponseMessage::new("did:peer:responder".to_string(), thread_id);
+                service
+                    .process_response(&response, None, None)
+                    .await
+                    .unwrap();
+                service.create_complete(&id).await.unwrap();
+            })
+        };
+
+        let connected = module
+            .return_when_is_connected_by_thread_id(&record.thread_id, None)
+            .await
+            .expect("a late handshake is still a completed connection");
+        assert_eq!(connected.id, record.id);
+        late_peer.await.unwrap();
+    }
+
+    /// A peer that never answers still fails, at the documented bound.
+    #[tokio::test(start_paused = true)]
+    async fn return_when_is_connected_errors_when_the_peer_never_completes() {
+        let repo = Arc::new(ConnectionRepository::new());
+        let service = Arc::new(ConnectionService::new(repo));
+        let module = ConnectionsModule::new_with_service(service.clone());
+
+        let (record, _) = service
+            .create_request(
+                &create_test_oob_record(),
+                "did:peer:requester".to_string(),
+                Some("Alice".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let started = tokio::time::Instant::now();
+        let result = module.return_when_is_connected(&record.id, None).await;
+        match result {
+            Err(AgentError::Connections(msg)) => assert!(msg.contains("Timeout"), "{msg}"),
+            other => panic!("expected a timeout, got {:?}", other.map(|r| r.state)),
+        }
+        assert_eq!(started.elapsed(), DEFAULT_CONNECTION_WAIT_TIMEOUT);
+
+        let result = module
+            .return_when_is_connected_by_thread_id(&record.thread_id, None)
+            .await;
+        assert!(matches!(result, Err(AgentError::Connections(_))));
+    }
+
+    /// Waiting on an id that does not exist is an immediate error, not a wait.
+    #[tokio::test(start_paused = true)]
+    async fn return_when_is_connected_rejects_an_unknown_connection() {
+        let module = ConnectionsModule::new(Arc::new(ConnectionRepository::new()));
+        let started = tokio::time::Instant::now();
+        let result = module
+            .return_when_is_connected("no-such-connection", None)
+            .await;
+        match result {
+            Err(AgentError::Connections(msg)) => assert!(msg.contains("not found"), "{msg}"),
+            other => panic!("expected not found, got {:?}", other.map(|r| r.state)),
+        }
+        assert_eq!(started.elapsed(), Duration::ZERO);
     }
 
     #[tokio::test]

@@ -17,8 +17,10 @@ use crate::events::ConnectionStateChangedPayload;
 pub struct ConnectionService {
     repository: Arc<dyn ConnectionRepositoryTrait>,
 
-    /// Notify waiters when a connection response is processed (their_did set)
-    connection_ready_notify: Option<Arc<Notify>>,
+    /// Woken on every write this service makes to a connection record, so a
+    /// waiter can sleep until the state it needs exists instead of polling.
+    /// Shared with the agent (`with_connection_notify`) when it owns one.
+    connection_ready_notify: Arc<Notify>,
 
     #[cfg(feature = "events")]
     event_bus: Option<Arc<agent_events::EventBus>>,
@@ -31,7 +33,7 @@ impl ConnectionService {
     pub fn new(repository: Arc<dyn ConnectionRepositoryTrait>) -> Self {
         Self {
             repository,
-            connection_ready_notify: None,
+            connection_ready_notify: Arc::new(Notify::new()),
             #[cfg(feature = "events")]
             event_bus: None,
             #[cfg(feature = "events")]
@@ -39,10 +41,25 @@ impl ConnectionService {
         }
     }
 
-    /// Set the connection ready notify for instant wake-up when a connection completes
+    /// Share the agent's connection notify so its waiters wake on this
+    /// service's state changes too.
     pub fn with_connection_notify(mut self, notify: Arc<Notify>) -> Self {
-        self.connection_ready_notify = Some(notify);
+        self.connection_ready_notify = notify;
         self
+    }
+
+    /// The notify this service wakes after every connection record write.
+    ///
+    /// Waiters must arm `notified()` (`Notified::enable`) *before* reading the
+    /// record, then await it if the record is not yet in the wanted state;
+    /// `notify_waiters` only reaches waiters that are already registered.
+    pub fn connection_notify(&self) -> Arc<Notify> {
+        self.connection_ready_notify.clone()
+    }
+
+    /// Wake everyone waiting on a connection record change.
+    fn wake_waiters(&self) {
+        self.connection_ready_notify.notify_waiters();
     }
 
     /// Set the event bus for emitting connection events
@@ -134,6 +151,7 @@ impl ConnectionService {
 
         // Save the connection record
         self.repository.save(&record).await?;
+        self.wake_waiters();
 
         // Emit state changed event
         #[cfg(feature = "events")]
@@ -210,6 +228,7 @@ impl ConnectionService {
 
         // Save the connection record
         self.repository.save(&record).await?;
+        self.wake_waiters();
 
         tracing::debug!("✓ [process_request] Connection created:");
         tracing::debug!(
@@ -263,6 +282,7 @@ impl ConnectionService {
         // Update record state
         record.update_state(DidExchangeState::ResponseSent);
         self.repository.update(&record).await?;
+        self.wake_waiters();
 
         tracing::debug!("✓ [create_response] Connection updated to ResponseSent:");
         tracing::debug!(
@@ -324,11 +344,7 @@ impl ConnectionService {
         // Update state
         record.update_state(DidExchangeState::ResponseReceived);
         self.repository.update(&record).await?;
-
-        // Signal waiters that a connection response was processed (their_did is now set)
-        if let Some(notify) = &self.connection_ready_notify {
-            notify.notify_waiters();
-        }
+        self.wake_waiters();
 
         // Emit state changed event
         #[cfg(feature = "events")]
@@ -376,6 +392,7 @@ impl ConnectionService {
         // Update state
         record.update_state(DidExchangeState::Completed);
         self.repository.update(&record).await?;
+        self.wake_waiters();
 
         tracing::debug!("✓ [create_complete] Connection updated to Completed:");
         tracing::debug!(
@@ -436,6 +453,7 @@ impl ConnectionService {
         // Update state to completed
         record.update_state(DidExchangeState::Completed);
         self.repository.update(&record).await?;
+        self.wake_waiters();
 
         // Emit state changed event
         #[cfg(feature = "events")]
@@ -452,7 +470,9 @@ impl ConnectionService {
 
     /// Update a connection record
     pub async fn update(&self, record: &ConnectionRecord) -> Result<()> {
-        self.repository.update(record).await
+        self.repository.update(record).await?;
+        self.wake_waiters();
+        Ok(())
     }
 
     /// Get connection by thread ID
