@@ -16,7 +16,6 @@ didcomm = { path = "../../didcomm" }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -36,6 +35,15 @@ hex = { workspace = true }
 
 # Guard evaluation (JMESPath expressions)
 jmespath = "0.5"
+
+
+# Tokio: the workspace's full runtime on native targets; on wasm32 only what
+# compiles there ("sync", "rt", "time", "macros") — `full` pulls `net`/mio, which does not.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync", "rt", "time", "macros"] }
 
 [features]
 default = []

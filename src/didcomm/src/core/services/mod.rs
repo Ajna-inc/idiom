@@ -5,7 +5,7 @@ pub use did_document_service::{DidCommDocumentService, DidResolver, ServiceEndpo
 pub use v1_compat::{base58_to_multibase, multibase_to_base58};
 
 // EnvelopeService requires native features (spawn_blocking, full tokio runtime)
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 mod envelope_service;
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub use envelope_service::{EnvelopeService, UnpackMetadata};

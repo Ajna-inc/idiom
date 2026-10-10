@@ -118,7 +118,8 @@ impl DiscoverFeaturesV1Handler {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for DiscoverFeaturesV1Handler {
     fn supported_types(&self) -> Vec<String> {
         vec![QUERY_V1_TYPE.to_string()]
@@ -161,7 +162,8 @@ impl DiscoverFeaturesV2Handler {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for DiscoverFeaturesV2Handler {
     fn supported_types(&self) -> Vec<String> {
         vec![QUERIES_V2_TYPE.to_string()]

@@ -46,5 +46,5 @@ pub use services::{DidCommDocumentService, DidResolver, ServiceEndpoint};
 pub use version::{DIDCommVersion, PackOptions};
 
 // Native-only exports (require full tokio runtime)
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub use services::{EnvelopeService, UnpackMetadata};

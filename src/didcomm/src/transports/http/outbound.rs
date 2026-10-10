@@ -13,7 +13,7 @@ use async_trait::async_trait;
 /// Uses reqwest on native, web-sys fetch on WASM.
 pub struct HttpOutboundTransport {
     /// HTTP client (native only)
-    #[cfg(feature = "native")]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     client: reqwest::Client,
 }
 
@@ -24,7 +24,7 @@ impl HttpOutboundTransport {
     /// but `Agent` wires up its shared `http_client` via
     /// [`HttpOutboundTransport::with_client`] so all outbound DIDComm
     /// shares one TLS pool with the mediation bootstrap + pickup loops.
-    #[cfg(feature = "native")]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -36,19 +36,22 @@ impl HttpOutboundTransport {
     /// the connection-request POST (via this transport), the mediation
     /// bootstrap POSTs (via `Agent::setup_mediation`), and pickup polls
     /// (via `Agent::poll_pickup_once`).
-    #[cfg(feature = "native")]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     pub fn with_client(client: reqwest::Client) -> Self {
         Self { client }
     }
 
     /// Create a new HTTP outbound transport with default settings (WASM)
-    #[cfg(all(feature = "wasm", not(feature = "native")))]
+    #[cfg(all(
+        feature = "wasm",
+        not(all(feature = "native", not(target_arch = "wasm32")))
+    ))]
     pub fn new() -> Self {
         Self {}
     }
 
     /// Create a new HTTP outbound transport with custom timeout
-    #[cfg(feature = "native")]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     pub fn with_timeout(timeout_secs: u64) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(timeout_secs))
@@ -59,7 +62,10 @@ impl HttpOutboundTransport {
     }
 
     /// Create a new HTTP outbound transport with custom timeout (WASM)
-    #[cfg(all(feature = "wasm", not(feature = "native")))]
+    #[cfg(all(
+        feature = "wasm",
+        not(all(feature = "native", not(target_arch = "wasm32")))
+    ))]
     pub fn with_timeout(_timeout_secs: u64) -> Self {
         Self {}
     }
@@ -75,7 +81,7 @@ impl Default for HttpOutboundTransport {
 // NATIVE IMPLEMENTATION (reqwest)
 // =============================================================================
 
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 #[async_trait]
 impl OutboundTransport for HttpOutboundTransport {
     async fn send(&self, endpoint: &str, message: &str) -> Result<Option<String>> {
@@ -140,7 +146,10 @@ impl OutboundTransport for HttpOutboundTransport {
 // WASM IMPLEMENTATION (web-sys fetch)
 // =============================================================================
 
-#[cfg(all(feature = "wasm", not(feature = "native")))]
+#[cfg(all(
+    feature = "wasm",
+    not(all(feature = "native", not(target_arch = "wasm32")))
+))]
 #[async_trait(?Send)]
 impl OutboundTransport for HttpOutboundTransport {
     async fn send(&self, endpoint: &str, message: &str) -> Result<Option<String>> {
@@ -273,7 +282,7 @@ mod tests {
         assert!(!transport.supports_endpoint("did:key:z6Mk..."));
     }
 
-    #[cfg(feature = "native")]
+    #[cfg(all(feature = "native", not(target_arch = "wasm32")))]
     #[tokio::test]
     async fn test_send_to_invalid_endpoint() {
         let transport = HttpOutboundTransport::new();

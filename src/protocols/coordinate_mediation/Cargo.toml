@@ -20,13 +20,21 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
 uuid = { workspace = true }
 dashmap = "6"
 chrono = { workspace = true }
 tracing = { workspace = true }
 bs58 = { workspace = true }
 base64 = { workspace = true }
+
+
+# Tokio: the workspace's full runtime on native targets; on wasm32 only what
+# compiles there ("sync", "rt", "time", "macros") — `full` pulls `net`/mio, which does not.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.42", default-features = false, features = ["sync", "rt", "time", "macros"] }
 
 [features]
 default = ["events"]

@@ -32,20 +32,20 @@
 pub mod http;
 pub mod traits;
 
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub mod ws;
 
 // Re-exports - HttpInboundTransport is native-only (requires axum server)
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub use http::HttpInboundTransport;
 
-#[cfg(any(feature = "native", feature = "wasm"))]
+#[cfg(any(all(feature = "native", not(target_arch = "wasm32")), feature = "wasm"))]
 pub use http::HttpOutboundTransport;
 pub use traits::{Result, TransportError, TransportMetadata};
 // OutboundTransport is only defined for native (Send + Sync) or wasm builds
-#[cfg(any(feature = "native", feature = "wasm"))]
+#[cfg(any(all(feature = "native", not(target_arch = "wasm32")), feature = "wasm"))]
 pub use traits::OutboundTransport;
 
 // InboundTransport and MessageReceiver are native-only (require full async runtime)
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub use traits::{InboundTransport, MessageReceiver};

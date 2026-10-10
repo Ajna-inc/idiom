@@ -18,7 +18,8 @@ impl PublishTemplateHandler {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for PublishTemplateHandler {
     fn supported_types(&self) -> Vec<String> {
         vec![PublishTemplateMessage::TYPE.to_string()]

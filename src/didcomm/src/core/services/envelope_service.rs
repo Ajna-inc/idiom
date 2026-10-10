@@ -282,6 +282,7 @@ impl EnvelopeService {
     /// - Multibase to base58 key conversion
     /// - Message format conversion (v2 to v1)
     /// - Authcrypt or Anoncrypt based on sender presence
+    #[cfg(not(target_arch = "wasm32"))]
     async fn pack_v1(
         &self,
         message: &Message,
@@ -389,6 +390,20 @@ impl EnvelopeService {
             }
         }
         Ok(json)
+    }
+
+    /// DIDComm v1 is not compiled for wasm32 (its JWE crypto is aries-askar).
+    #[cfg(target_arch = "wasm32")]
+    async fn pack_v1(
+        &self,
+        _message: &Message,
+        _to: &str,
+        _from: Option<&str>,
+        _options: &PackOptions,
+    ) -> Result<String> {
+        Err(DidcommError::PackingFailed(
+            "DIDComm v1 is not available on wasm32".to_string(),
+        ))
     }
 
     /// Convert v2 Message format to v1 PlaintextMessage (HashMap)
@@ -618,6 +633,7 @@ impl EnvelopeService {
     }
 
     /// Unpack a DIDComm v1 message
+    #[cfg(not(target_arch = "wasm32"))]
     async fn unpack_v1(&self, packed: &str) -> Result<(Message, UnpackMetadata)> {
         // Parse as v1 encrypted message
         let encrypted: crate::v1::EncryptedMessage = serde_json::from_str(packed).map_err(|e| {
@@ -704,6 +720,14 @@ impl EnvelopeService {
         };
 
         Ok((message, metadata))
+    }
+
+    /// DIDComm v1 is not compiled for wasm32 (its JWE crypto is aries-askar).
+    #[cfg(target_arch = "wasm32")]
+    async fn unpack_v1(&self, _packed: &str) -> Result<(Message, UnpackMetadata)> {
+        Err(DidcommError::UnpackingFailed(
+            "DIDComm v1 is not available on wasm32".to_string(),
+        ))
     }
 
     /// Unpack a DIDComm v2 message

@@ -21,8 +21,10 @@ native = [
     "dep:futures-util",
 ]
 
-# DIDComm v1 compatibility. `v1` and `agent_core` are now always compiled in
-# (merged into this crate), so this feature only preserves the cfg name.
+# DIDComm v1 compatibility. The `v1` module (JWE authcrypt/anoncrypt over
+# aries-askar) is compiled on every native target regardless of features, so
+# native builds are unchanged; it is never compiled for wasm32 (aries-askar does
+# not build there). The feature only preserves the cfg name.
 v1-compat = []
 
 # WASM build: uses web-sys fetch API for browser/WASM transports.
@@ -44,7 +46,9 @@ agent_core = { path = "../core/agent_core" }
 
 # DIDComm v2 (SICPA didcomm-rust, Ajna fork with WASM fixes) — renamed to avoid
 # clashing with this crate's own name (`didcomm`).
-sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
+# `uniffi` (mobile bindings) does not target wasm32: it is enabled on native
+# targets only, below.
+sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main" }
 
 # Async
 async-trait = { workspace = true }
@@ -59,8 +63,7 @@ bs58 = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 
-# Cryptography (v1)
-aries-askar = { workspace = true }
+# Cryptography (v1: aries-askar is a native-target dependency, below)
 chacha20poly1305 = "0.10"  # XChaCha20-Poly1305 AEAD
 ml-kem = { workspace = true }
 kem = { workspace = true }
@@ -82,16 +85,11 @@ rand = "0.8"
 # NATIVE ONLY (transports)
 # ============================================================================
 
-# HTTP Server (Axum) - native only
-axum = { workspace = true, optional = true }
-hyper = { workspace = true, optional = true }
-
-# HTTP Client (Reqwest) - native only
-reqwest = { workspace = true, optional = true }
-
-# WebSocket Client (Tungstenite) - native only
-tokio-tungstenite = { workspace = true, optional = true }
-futures-util = { workspace = true, optional = true }
+# The native transports (axum, hyper, reqwest, tokio-tungstenite,
+# futures-util) are native-target dependencies, declared in the
+# `cfg(not(target_arch = "wasm32"))` table below: on wasm32 the `native`
+# feature enables nothing, so every crate that depends on `didcomm` with
+# default features still builds for the browser.
 
 # ============================================================================
 # WASM ONLY (transports)
@@ -113,9 +111,24 @@ web-sys = { version = "0.3", optional = true, features = [
 # Tokio with full features for native, minimal for WASM
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
+# Native transports (enabled by the `native` feature; absent on wasm32).
+axum = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+# DIDComm v1 pack/unpack (the `v1` module) — native targets only.
+aries-askar = { workspace = true }
+sicpa_didcomm = { package = "didcomm", git = "https://github.com/Ajna-inc/didcomm-rust", branch = "main", features = ["uniffi"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1.42", default-features = false, features = ["sync"] }
+# Browser RNG backends for every getrandom major in the graph (0.2: `js`;
+# 0.3: `wasm_js`, plus `--cfg getrandom_backend="wasm_js"` in the consumer).
+getrandom = { version = "0.2", features = ["js"] }
+getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+uuid = { version = "1.11", features = ["v4", "serde", "js"] }
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

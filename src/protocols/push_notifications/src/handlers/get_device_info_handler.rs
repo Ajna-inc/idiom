@@ -21,7 +21,8 @@ impl GetDeviceInfoHandler {
     }
 }
 
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for GetDeviceInfoHandler {
     fn supported_types(&self) -> Vec<String> {
         vec![GET_DEVICE_INFO_TYPE.to_string()]

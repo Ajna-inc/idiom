@@ -258,7 +258,8 @@ impl W3cIssueCredentialHandler {
 macro_rules! impl_message_handler {
     ($ty:ty, $types:expr, $method:ident) => {
         #[cfg(not(target_arch = "wasm32"))]
-        #[async_trait]
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl MessageHandler for $ty {
             fn supported_types(&self) -> Vec<String> {
                 $types

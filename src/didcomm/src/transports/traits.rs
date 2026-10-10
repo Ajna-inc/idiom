@@ -68,7 +68,7 @@ pub type Result<T> = std::result::Result<T, TransportError>;
 /// Inbound transport - receives messages (native only)
 ///
 /// Implementations listen for incoming messages and forward them to a MessageReceiver.
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 #[async_trait]
 pub trait InboundTransport: Send + Sync {
     /// Start the transport listener
@@ -87,7 +87,7 @@ pub trait InboundTransport: Send + Sync {
 /// Outbound transport - sends messages (native)
 ///
 /// Implementations send messages to remote endpoints.
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 #[async_trait]
 pub trait OutboundTransport: Send + Sync {
     /// Send a packed message to an endpoint
@@ -101,7 +101,7 @@ pub trait OutboundTransport: Send + Sync {
 }
 
 /// Message receiver - callback for inbound messages (native)
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 #[async_trait]
 pub trait MessageReceiver: Send + Sync {
     /// Called when a message is received
@@ -129,7 +129,10 @@ pub trait MessageReceiver: Send + Sync {
 /// Outbound transport - sends messages (WASM)
 ///
 /// WASM is single-threaded, so no Send/Sync bounds required.
-#[cfg(all(feature = "wasm", not(feature = "native")))]
+#[cfg(all(
+    feature = "wasm",
+    not(all(feature = "native", not(target_arch = "wasm32")))
+))]
 #[async_trait(?Send)]
 pub trait OutboundTransport {
     /// Send a packed message to an endpoint

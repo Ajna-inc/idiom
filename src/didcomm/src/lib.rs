@@ -19,4 +19,6 @@ pub mod core;
 pub mod dcx;
 pub mod messaging;
 pub mod transports;
+/// DIDComm v1 (JWE over aries-askar): native targets only; wasm32 speaks v2.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod v1;

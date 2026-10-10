@@ -39,7 +39,7 @@ pub use handlers::{
 pub use services::{DidCommDocumentError, DidCommDocumentService};
 
 // MessageDispatcher requires EnvelopeService which is native-only
-#[cfg(feature = "native")]
+#[cfg(all(feature = "native", not(target_arch = "wasm32")))]
 pub use services::MessageDispatcher;
 
 // Re-export Result type alias from handlers for convenience

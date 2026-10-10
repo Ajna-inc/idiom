@@ -27,7 +27,8 @@ impl IssueCredentialHandler {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl MessageHandler for IssueCredentialHandler {
     fn supported_types(&self) -> Vec<String> {
         vec![IssueCredentialMessage::TYPE.to_string()]
